@@ -34,6 +34,10 @@ bool getObject(const juce::var& v, juce::DynamicObject*& o) {
 bool isWasapiType(const juce::String& typeName) {
     return typeName.startsWithIgnoreCase("Windows Audio");
 }
+juce::var getPropertyOr(const juce::DynamicObject& object, const char* name, juce::var fallback) {
+    const juce::Identifier propertyName(name);
+    return object.hasProperty(propertyName) ? object.getProperty(propertyName) : fallback;
+}
 
 class Engine final : public juce::AudioIODeviceCallback {
 public:
@@ -78,11 +82,11 @@ public:
         juce::AudioDeviceManager::AudioDeviceSetup setup;
         setup.inputDeviceName = inputName;
         setup.outputDeviceName = outputName;
-        setup.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
-        setup.bufferSize = static_cast<int>(command.getProperty("bufferSize", 0));
+        setup.sampleRate = static_cast<double>(getPropertyOr(command, "sampleRate", 0.0));
+        setup.bufferSize = static_cast<int>(getPropertyOr(command, "bufferSize", 0));
         setup.useDefaultInputChannels = false; setup.useDefaultOutputChannels = false;
-        const auto inChannels = static_cast<int>(command.getProperty("inputChannels", 8));
-        const auto outChannels = static_cast<int>(command.getProperty("outputChannels", 8));
+        const auto inChannels = static_cast<int>(getPropertyOr(command, "inputChannels", 8));
+        const auto outChannels = static_cast<int>(getPropertyOr(command, "outputChannels", 8));
         setup.inputChannels.setRange(0, juce::jlimit(0, 64, inChannels), true);
         setup.outputChannels.setRange(0, juce::jlimit(0, 64, outChannels), true);
         if (!parseRoutes(command.getProperty("routes"))) return;
@@ -116,8 +120,8 @@ public:
     bool isRunning() const noexcept { return running.load(); }
 
     void setProtection(const juce::DynamicObject& command) {
-        const auto shouldEnable = static_cast<bool>(command.getProperty("enabled", true));
-        const auto presetName = command.getProperty("preset", "speech").toString();
+        const auto shouldEnable = static_cast<bool>(getPropertyOr(command, "enabled", true));
+        const auto presetName = getPropertyOr(command, "preset", "speech").toString();
         if (presetName != "speech" && presetName != "music") {
             error("protection preset must be speech or music"); return;
         }
@@ -136,9 +140,9 @@ public:
         const std::lock_guard<std::mutex> controlGuard(controlMutex);
         if (!running.load() || !deviceActive.load()) { error("start active audio before calibration"); return; }
         if (calibrationBusy.exchange(true)) { error("calibration is already running or finalizing"); return; }
-        const auto route = static_cast<int>(command.getProperty("route", 0));
+        const auto route = static_cast<int>(getPropertyOr(command, "route", 0));
         if (route < 0 || route >= routeCount) { calibrationBusy.store(false); error("calibration route is invalid"); return; }
-        const auto level = static_cast<float>(static_cast<double>(command.getProperty("level", 0.06)));
+        const auto level = static_cast<float>(static_cast<double>(getPropertyOr(command, "level", 0.06)));
         if (!(level > 0.0f && level <= 0.08f)) { calibrationBusy.store(false); error("calibration level must be above 0 and at most 0.08"); return; }
         const auto rate = sampleRate.load();
         if (rate < 8000.0) { calibrationBusy.store(false); error("audio device sample rate is unavailable"); return; }
