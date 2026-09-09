@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $true
 Set-StrictMode -Version Latest
 
 $AppRoot = Split-Path -Parent $PSScriptRoot
@@ -15,12 +16,16 @@ $StagingRoot = Join-Path $AppRoot "engine\win32-x64"
 $BuildMode = if ($AsioSdkPath) { "asio" } else { "wasapi" }
 $TranscriptPath = Join-Path $EvidenceRoot "build-transcript-$BuildMode.txt"
 $EnumerationPath = Join-Path $EvidenceRoot "device-enumeration-$BuildMode.jsonl"
+$Phase = "initialization"
+$TranscriptStarted = $false
 
 New-Item -ItemType Directory -Force -Path $EvidenceRoot, $StagingRoot | Out-Null
 Remove-Item -Force -ErrorAction SilentlyContinue $TranscriptPath, $EnumerationPath
 Start-Transcript -Path $TranscriptPath
+$TranscriptStarted = $true
 
 try {
+    $Phase = "toolchain inspection"
     Write-Host "Recording Windows and toolchain information..."
     Get-ComputerInfo |
         Select-Object WindowsProductName, WindowsVersion, OsBuildNumber, OsArchitecture |
@@ -47,9 +52,12 @@ try {
         $CmakeArguments += "-DWERFEED_ENABLE_ASIO=OFF"
     }
 
+    $Phase = "native engine configuration"
     Write-Host "Configuring and building the native engine..."
     & cmake @CmakeArguments
+    $Phase = "native engine compilation"
     cmake --build $BuildRoot --config Release --parallel
+    $Phase = "native engine tests"
     ctest --test-dir $BuildRoot -C Release --output-on-failure
 
     $BuiltEngine = Join-Path $BuildRoot "Release\werfeed-engine.exe"
@@ -57,6 +65,7 @@ try {
         throw "Native build did not produce $BuiltEngine"
     }
 
+    $Phase = "audio device enumeration"
     Write-Host "Capturing real audio-device enumeration..."
     '{"type":"list_devices"}' |
         & $BuiltEngine |
@@ -67,6 +76,7 @@ try {
 
     Copy-Item -Force $BuiltEngine (Join-Path $StagingRoot "werfeed-engine.exe")
 
+    $Phase = "Electron portable packaging"
     Write-Host "Building the engine-backed Electron portable executable..."
     Push-Location $AppRoot
     try {
@@ -110,6 +120,23 @@ Tester notes:
     Write-Host ""
     Write-Host "Build succeeded: $($Portable.FullName)"
     Write-Host "Upload windows-validation-output and the portable executable for final sign-off."
+} catch {
+    $Failure = $_
+    if ($TranscriptStarted) {
+        Stop-Transcript | Out-Null
+        $TranscriptStarted = $false
+    }
+    $TranscriptTail = if (Test-Path $TranscriptPath) {
+        (Get-Content -Path $TranscriptPath -Tail 120 | Out-String)
+    } else {
+        "Build transcript was not created."
+    }
+    $Annotation = "Windows release failed during ${Phase}: $($Failure.Exception.Message)`n$TranscriptTail"
+    $Annotation = $Annotation.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+    Write-Host "::error file=artifacts/werfeed-herzback/scripts/windows-release.ps1::$Annotation"
+    throw $Failure
 } finally {
-    Stop-Transcript
+    if ($TranscriptStarted) {
+        Stop-Transcript | Out-Null
+    }
 }
