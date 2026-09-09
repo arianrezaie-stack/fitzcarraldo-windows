@@ -16,11 +16,35 @@ $StagingRoot = Join-Path $AppRoot "engine\win32-x64"
 $BuildMode = if ($AsioSdkPath) { "asio" } else { "wasapi" }
 $TranscriptPath = Join-Path $EvidenceRoot "build-transcript-$BuildMode.txt"
 $EnumerationPath = Join-Path $EvidenceRoot "device-enumeration-$BuildMode.jsonl"
+$NativeLogPath = Join-Path $EvidenceRoot "native-commands-$BuildMode.log"
 $Phase = "initialization"
 $TranscriptStarted = $false
 
+function Invoke-NativeLogged {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Executable,
+        [Parameter(Mandatory)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory)]
+        [string]$LogPath
+    )
+
+    $PreviousPreference = $PSNativeCommandUseErrorActionPreference
+    try {
+        $PSNativeCommandUseErrorActionPreference = $false
+        & $Executable @Arguments 2>&1 | Tee-Object -FilePath $LogPath -Append
+        $ExitCode = $LASTEXITCODE
+    } finally {
+        $PSNativeCommandUseErrorActionPreference = $PreviousPreference
+    }
+    if ($ExitCode -ne 0) {
+        throw "$Executable exited with code $ExitCode."
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $EvidenceRoot, $StagingRoot | Out-Null
-Remove-Item -Force -ErrorAction SilentlyContinue $TranscriptPath, $EnumerationPath
+Remove-Item -Force -ErrorAction SilentlyContinue $TranscriptPath, $EnumerationPath, $NativeLogPath
 Start-Transcript -Path $TranscriptPath
 $TranscriptStarted = $true
 
@@ -54,11 +78,15 @@ try {
 
     $Phase = "native engine configuration"
     Write-Host "Configuring and building the native engine..."
-    & cmake @CmakeArguments
+    Invoke-NativeLogged -Executable "cmake" -Arguments $CmakeArguments -LogPath $NativeLogPath
     $Phase = "native engine compilation"
-    cmake --build $BuildRoot --config Release --parallel
+    Invoke-NativeLogged -Executable "cmake" `
+        -Arguments @("--build", $BuildRoot, "--config", "Release", "--parallel", "--verbose") `
+        -LogPath $NativeLogPath
     $Phase = "native engine tests"
-    ctest --test-dir $BuildRoot -C Release --output-on-failure
+    Invoke-NativeLogged -Executable "ctest" `
+        -Arguments @("--test-dir", $BuildRoot, "-C", "Release", "--output-on-failure") `
+        -LogPath $NativeLogPath
 
     $BuiltEngine = Join-Path $BuildRoot "Release\werfeed-engine.exe"
     if (-not (Test-Path $BuiltEngine)) {
@@ -80,7 +108,9 @@ try {
     Write-Host "Building the engine-backed Electron portable executable..."
     Push-Location $AppRoot
     try {
-        pnpm run desktop:win
+        Invoke-NativeLogged -Executable "pnpm" `
+            -Arguments @("run", "desktop:win") `
+            -LogPath $NativeLogPath
     } finally {
         Pop-Location
     }
@@ -131,7 +161,15 @@ Tester notes:
     } else {
         "Build transcript was not created."
     }
-    $Annotation = "Windows release failed during ${Phase}: $($Failure.Exception.Message)`n$TranscriptTail"
+    $NativeTail = if (Test-Path $NativeLogPath) {
+        (Get-Content -Path $NativeLogPath -Tail 120 | Out-String)
+    } else {
+        "Native command log was not created."
+    }
+    if ($NativeTail.Length -gt 12000) {
+        $NativeTail = $NativeTail.Substring($NativeTail.Length - 12000)
+    }
+    $Annotation = "Windows release failed during ${Phase}: $($Failure.Exception.Message)`n$NativeTail`n$TranscriptTail"
     $Annotation = $Annotation.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
     Write-Host "::error file=artifacts/werfeed-herzback/scripts/windows-release.ps1::$Annotation"
     throw $Failure
