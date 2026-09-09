@@ -74,8 +74,7 @@ public:
         if (typeName.isEmpty()) { error("configure requires deviceType"); return; }
         if (!isWasapiType(typeName)) { error("Werfeed supports WASAPI devices only"); return; }
         manager.setCurrentAudioDeviceType(typeName, true);
-        if (manager.getCurrentDeviceType() == nullptr ||
-            manager.getCurrentDeviceType()->getTypeName() != typeName) {
+        if (manager.getCurrentAudioDeviceType() != typeName) {
             error("audio device type unavailable"); return;
         }
 
