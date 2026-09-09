@@ -1,0 +1,16 @@
+export {};
+
+declare global {
+  interface Window {
+    werfeedDesktop?: {
+      platform: string;
+      desktopShell: boolean;
+      engine: {
+        getStatus: () => Promise<{ state: string; reason?: string }>;
+        command: (command: 'list_devices' | 'configure' | 'start' | 'stop' | 'set_protection' | 'start_calibration', payload?: Record<string, unknown>) => Promise<{ accepted: true }>;
+        onEvent: (listener: (event: unknown) => void) => () => void;
+        onStatus: (listener: (status: { state: string; reason?: string }) => void) => () => void;
+      };
+    };
+  }
+}

@@ -1,0 +1,72 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "NK3OVmWnAlB1mbPd3VQsy"
+uri = "file://artifacts/werfeed-herzback/desktop-dist/Werfeed-Herzback-0.1.0-x64.exe"
+type = "unspecified"
+title = "Werfeed Herzback for Windows"
+description = "Portable 64-bit Windows executable for the Werfeed Herzback desktop control-surface app. No installer is required; download and run the file on Windows."
+logical_id = "7a300965-71b3-4491-958d-c621d01b2a1e"
+content_hash = "sha256:2e82b04b7db96724758c66b536ff29173113cb145dacafc2867d216336c5cd12"
+size = 92571072
+mtime_ms = 1788914312537
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:9f9c45ca-1df6-4ebb-9f0e-3d2883b2727e/7a300965-71b3-4491-958d-c621d01b2a1e/6867bfcb-d74e-43cb-9918-7801dfe20edc"
+storage_version_token = "1788914337217848"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "HmNuPfXLhsxp1B7MXstTx"
+uri = "file://artifacts/werfeed-herzback/desktop-dist/Werfeed-Herzback-0.1.1-x64.exe"
+type = "unspecified"
+title = "Werfeed Herzback 0.1.1 for Windows"
+description = "Rebuilt portable 64-bit Windows executable with Helvetica typography, the Land of Silence and Darkness headline, and six analyzer averaging options from 1/4 to 1/24 octave."
+logical_id = "c3e2539b-992a-4db3-9409-ed0b5bac10f3"
+content_hash = "sha256:7560ca44bb3b51ee055f7dd3f95e40727ae8cbc7d0228314b4836f7f1c53aa39"
+size = 92573825
+mtime_ms = 1788915157344
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:9f9c45ca-1df6-4ebb-9f0e-3d2883b2727e/c3e2539b-992a-4db3-9409-ed0b5bac10f3/9e2f12c6-5489-4bf4-b9c3-8eb01a3ff1e9"
+storage_version_token = "1788915181814682"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "oA0Ige7hiME45slSJsOx6"
+uri = "file://artifacts/werfeed-herzback/desktop-dist/Werfeed-Herzback-0.1.2-x64.exe"
+type = "unspecified"
+title = "Werfeed Herzback 0.1.2 for Windows"
+description = "Final portable 64-bit Windows executable with a subtle cursor-following frequency readout across the realtime analyzer."
+logical_id = "051d6069-8b24-4638-8958-d4bf6acdb008"
+content_hash = "sha256:e7d79f83d5ca247b8e52bd64b6e858a63d61c21d0ee9a0ef6f194227e53b0d6e"
+size = 92574263
+mtime_ms = 1788915493223
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:9f9c45ca-1df6-4ebb-9f0e-3d2883b2727e/051d6069-8b24-4638-8958-d4bf6acdb008/ffdba479-339f-4212-9c74-d8c519d5394b"
+storage_version_token = "1788915511348001"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "-T0KhOMeuFfwtFMuqBtA-"
+uri = "file://artifacts/werfeed-herzback/desktop-dist/Werfeed-Herzback-0.1.3-x64.exe"
+type = "unspecified"
+title = "Werfeed Herzback 0.1.3 for Windows"
+description = "Portable 64-bit Windows executable with the analyzer curve, EQ markers, frequency labels, grid, and mouse-hover readout aligned to one logarithmic 20 Hz–20 kHz scale."
+logical_id = "e07799e1-fe38-4fff-8e88-411a6fa55410"
+content_hash = "sha256:1893cfdaf93f8bc5555f15b56225ddaa2d70fc6b0e42ea25a872dd4f05821768"
+size = 92574570
+mtime_ms = 1788915885840
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:9f9c45ca-1df6-4ebb-9f0e-3d2883b2727e/e07799e1-fe38-4fff-8e88-411a6fa55410/901a6e4e-88fa-4f9a-a4d0-c7c68d0cd3fe"
+storage_version_token = "1788915902159359"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "n48e3kuxm5OhYDP770U--"
+uri = "file://artifacts/werfeed-herzback/desktop-dist/Werfeed-Herzback-0.1.4-x64.exe"
+type = "unspecified"
+title = "Werfeed Herzback 0.1.4 for Windows"
+description = "Replacement portable 64-bit Windows executable fixing the blank Electron window. The packaged file-based renderer was tested directly before distribution."
+logical_id = "bdd8ffad-6504-4900-9af7-210e331c14d9"
+content_hash = "sha256:1d78cbe349040627c31a9bede306d10433eff6859b21eb53ef164fae453fd576"
+size = 92574285
+mtime_ms = 1788917474979
+storage_uri = "gcs://replit-rams-assets-kira/rams/assets/repl:9f9c45ca-1df6-4ebb-9f0e-3d2883b2727e/bdd8ffad-6504-4900-9af7-210e331c14d9/95c5dace-57f6-4269-a04f-d8c60ba38f23"
+storage_version_token = "1788917504354502"
+content_type = "application/octet-stream"

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Werfeed Herzback"
+description = "A desktop-style live feedback protection control surface for sound engineers, with calibrated mono routing, smoothed room analysis, realtime EQ move visibility, speech/music modes, and live protection controls."
+version = "1.0.0"
+id = "artifacts/werfeed-herzback"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21230
+
+[services.development]
+run = "pnpm --filter @workspace/werfeed-herzback run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/werfeed-herzback", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/werfeed-herzback/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21230"
+BASE_PATH = "/"

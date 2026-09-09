@@ -1,0 +1,3 @@
+- [Electron file startup](electron-file-startup.md) — verify desktop bundles through file://; avoid browser-path routing for this single-screen packaged app.
+- [Native audio architecture](native-audio-architecture.md) — use a GPLv3 JUCE sidecar for realtime audio; Electron is control/telemetry only.
+- [Feedback detector resolution](feedback-detector-resolution.md) — sparse log-frequency oscillators miss off-grid tones; use a fixed FFT and test arbitrary multi-tone inputs.
