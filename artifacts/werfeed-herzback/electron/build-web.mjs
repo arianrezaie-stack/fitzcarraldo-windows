@@ -1,21 +1,11 @@
-import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const result = spawnSync(
-  process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-  ['exec', 'vite', 'build', '--config', 'vite.config.ts', '--base', './'],
-  {
-    cwd: new URL('..', import.meta.url),
-    env: {
-      ...process.env,
-      PORT: process.env.PORT || '21230',
-      BASE_PATH: './',
-    },
-    stdio: 'inherit',
-  },
-);
+import { build } from 'vite';
 
-if (result.error) {
-  throw result.error;
-}
+process.env.PORT ||= '21230';
+process.env.BASE_PATH = './';
 
-process.exit(result.status ?? 1);
+await build({
+  configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+  base: './',
+});
