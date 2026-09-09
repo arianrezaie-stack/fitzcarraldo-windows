@@ -1,0 +1,56 @@
+name: Windows release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/windows-release.yml"
+      - "artifacts/werfeed-herzback/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build, test, and package Windows release
+        shell: pwsh
+        working-directory: artifacts/werfeed-herzback
+        run: ./scripts/windows-release.ps1
+
+      - name: Upload portable executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: werfeed-herzback-windows-portable
+          path: artifacts/werfeed-herzback/desktop-dist/*.exe
+          if-no-files-found: error
+
+      - name: Upload build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: werfeed-herzback-windows-evidence
+          path: artifacts/werfeed-herzback/windows-validation-output/
+          if-no-files-found: error
