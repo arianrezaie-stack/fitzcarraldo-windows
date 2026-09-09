@@ -162,14 +162,20 @@ Tester notes:
         "Build transcript was not created."
     }
     $NativeTail = if (Test-Path $NativeLogPath) {
-        (Get-Content -Path $NativeLogPath -Tail 120 | Out-String)
+        (Get-Content -Path $NativeLogPath -Tail 35 | Out-String)
     } else {
         "Native command log was not created."
     }
-    if ($NativeTail.Length -gt 12000) {
-        $NativeTail = $NativeTail.Substring($NativeTail.Length - 12000)
+    $NativeErrors = if (Test-Path $NativeLogPath) {
+        (Get-Content -Path $NativeLogPath |
+            Select-String -Pattern "CMake Error|fatal error|error C[0-9]+|error LNK[0-9]+|error MSB[0-9]+" |
+            Select-Object -Last 50 |
+            ForEach-Object { $_.Line } |
+            Out-String)
+    } else {
+        ""
     }
-    $Annotation = "Windows release failed during ${Phase}: $($Failure.Exception.Message)`n$NativeTail`n$TranscriptTail"
+    $Annotation = "Windows release failed during ${Phase}: $($Failure.Exception.Message)`n$NativeErrors`n$NativeTail`n$TranscriptTail"
     $Annotation = $Annotation.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
     Write-Host "::error file=artifacts/werfeed-herzback/scripts/windows-release.ps1::$Annotation"
     throw $Failure
