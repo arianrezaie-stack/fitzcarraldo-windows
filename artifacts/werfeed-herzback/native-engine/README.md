@@ -83,9 +83,9 @@ hold for each phase; use a smaller value only for a smoke test.
 
 `{"type":"list_devices"}` reports input/output device records, including the
 available channel count and an `interfaceName` family label for each endpoint.
-The renderer uses `deviceType` plus `interfaceName` to show one physical
-interface/protocol entry, while retaining the endpoint `name` values for native
-configuration. Configure before start, for example:
+The renderer exposes every reported backend/interface and mono input/output
+pairing in each route selector, while retaining the endpoint `name` values for
+native configuration. Configure before start, for example:
 
 ```json
 {"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":4,"outputChannels":4,"routes":[{"input":0,"output":0,"enabled":true,"suppression":0.75},{"input":1,"output":1,"enabled":true,"suppression":0.75},{"input":2,"output":2,"enabled":true,"suppression":0.75},{"input":3,"output":3,"enabled":true,"suppression":0.75}]}

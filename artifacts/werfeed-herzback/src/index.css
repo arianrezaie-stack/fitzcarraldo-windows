@@ -259,11 +259,8 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .cut-main { display: flex; align-items: center; justify-content: space-between; gap: 7px; }.cut-frequency { display: flex; align-items: center; gap: 7px; color: #eadbc5; font: 11px var(--app-font-mono); }.cut-dot { width: 7px; height: 7px; border-radius: 50%; }.cut-depth { color: #d1b38c; font: 10px var(--app-font-mono); }.cut-release { border: 0; padding: 0; color: #a8886d; background: transparent; }.cut-release:hover { color: #e0a36c; }
 .cut-meta { display: flex; justify-content: space-between; margin-top: 7px; color: #a98a70; font-size: 8px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }.cut-meta strong { color: #c4a278; }.cut-meta strong.rising { color: #d3975f; }
 .armed-line { display: flex; align-items: center; gap: 6px; margin-top: 14px; color: #d29a61; font-size: 9px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
-.device-select { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 15px; border: 1px solid #684839; border-radius: 7px; padding: 11px; color: #eadbc5; text-align: left; background: #261813; }.device-select:hover { border-color: #ad7650; }
-.top-device-select { margin-top: 0; margin-bottom: 18px; background: linear-gradient(105deg, #38251b, #2b1b15); }
-.device-select select, .route-pair-field select, .route-bus-grid select, .detail-row select { min-width: 0; border: 1px solid #b9b9b9; border-radius: 5px; padding: 7px 8px; color: #15110e; background: #fff; font: 10px var(--app-font-mono); }
-.device-select select { max-width: 52%; }
-.device-select select option, .route-pair-field select option, .route-bus-grid select option, .detail-row select option { color: #15110e; background: #fff; }
+.route-pair-field select, .route-bus-grid select, .detail-row select { min-width: 0; border: 1px solid #b9b9b9; border-radius: 5px; padding: 7px 8px; color: #15110e; background: #fff; font: 10px var(--app-font-mono); }
+.route-pair-field select option, .route-bus-grid select option, .detail-row select option { color: #15110e; background: #fff; }
 .device-name { display: block; font-size: 11px; font-weight: 700; }.device-detail { display: block; margin-top: 4px; color: #a9886d; font: 9px var(--app-font-mono); }
 .route-pair-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: #a98a70; font-size: 8px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .route-pair-field select { width: 58%; }
