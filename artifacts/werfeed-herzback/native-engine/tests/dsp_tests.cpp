@@ -6,6 +6,23 @@
 #include <limits>
 #include <vector>
 
+namespace {
+
+constexpr double calibrationStartHz = 20.0;
+constexpr double calibrationEndHz = 20000.0;
+
+double shapedRoomResponseDb(double frequency) {
+    const auto position = std::log(frequency / calibrationStartHz) /
+        std::log(calibrationEndHz / calibrationStartHz);
+    // A broad, deterministic room curve: rising high-frequency response with
+    // two wide room modes. Its features are intentionally wider than the
+    // calibration analysis window so local measurement should track them.
+    return -2.0 + 5.0 * position +
+        2.5 * std::sin(2.0 * werfeed::pi * 2.0 * position);
+}
+
+} // namespace
+
 int main() {
     constexpr double rate = 48000.0;
     const auto sweep = werfeed::makeLogSweep(rate, 1.0);
@@ -30,12 +47,38 @@ int main() {
         noiseState = noiseState * 1664525u + 1013904223u;
         value = (static_cast<float>((noiseState >> 8u) & 0xffffu) / 32768.0f - 1.0f) * 0.01f;
     }
+    // Silence/noise below the correlation threshold must not produce a delay.
     assert(werfeed::estimateDelay(probe, noiseOnly, 24000, 0.2f) == -1);
 
     std::vector<float> response(sweep.size() + 128, 0.0f);
     for (std::size_t i = 0; i < sweep.size(); ++i) response[i + 128] = sweep[i] * 0.5f;
     const auto measured = werfeed::measureResponse(sweep, response, rate, 128);
+    // Flat gain remains the baseline calibration behavior.
     for (const auto db : measured) assert(std::isfinite(db) && std::abs(db + 6.0206f) < 1.5f);
+
+    constexpr std::size_t shapedDelay = 173;
+    std::vector<float> shapedResponse(sweep.size() + shapedDelay, 0.0f);
+    for (std::size_t i = 0; i < sweep.size(); ++i) {
+        const auto position = static_cast<double>(i) /
+            static_cast<double>(sweep.size() - 1);
+        const auto frequency = calibrationStartHz *
+            std::pow(calibrationEndHz / calibrationStartHz, position);
+        const auto gain = std::pow(10.0, shapedRoomResponseDb(frequency) / 20.0);
+        shapedResponse[i + shapedDelay] = sweep[i] * static_cast<float>(gain);
+    }
+    const auto shapedMeasured = werfeed::measureResponse(
+        sweep, shapedResponse, rate, static_cast<int>(shapedDelay));
+    // The 40 ms local analysis window averages a small portion of the sweep,
+    // so the measured curve must follow the known response within 1.0 dB.
+    for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin) {
+        const auto position = static_cast<double>(bin) /
+            static_cast<double>(werfeed::analyzerBins - 1);
+        const auto frequency = calibrationStartHz *
+            std::pow(calibrationEndHz / calibrationStartHz, position);
+        assert(std::isfinite(shapedMeasured[bin]));
+        assert(std::abs(shapedMeasured[bin] -
+                        static_cast<float>(shapedRoomResponseDb(frequency))) < 1.0f);
+    }
 
     werfeed::FeedbackProcessor processor;
     processor.prepare(rate);
