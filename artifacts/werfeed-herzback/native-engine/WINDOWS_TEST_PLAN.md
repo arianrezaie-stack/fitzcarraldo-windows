@@ -1,7 +1,8 @@
 # Windows hardware and acoustic stability test
 
-Use the Release build on the target Windows machine. Test WASAPI Exclusive Mode
-first, then repeat in WASAPI Shared Mode as the compatibility fallback.
+Use the Release build on the target Windows machine. Test every backend that
+the build exposes: WASAPI Exclusive, WASAPI Shared, DirectSound, and ASIO when
+the separately supplied ASIO SDK is used.
 
 ## Safety
 
@@ -13,9 +14,10 @@ first, then repeat in WASAPI Shared Mode as the compatibility fallback.
 
 ## Hardware matrix
 
-For each supported interface, record WASAPI mode, driver version, sample rate,
-buffer size, measured delay, callback CPU, and xrun count. Use one physical
-interface for input and output unless the devices are externally clocked.
+For each supported backend/interface combination, record backend, driver
+version, sample rate, buffer size, measured delay, callback CPU, and xrun count.
+Use one physical interface for input and output unless the devices are
+externally clocked.
 
 1. Run at 48 kHz with 64, 128, and 256-sample buffers for 30 minutes each.
    Record the smallest stable setting rather than assuming every endpoint
@@ -31,6 +33,27 @@ interface for input and output unless the devices are externally clocked.
 ## Acoustic stability
 
 Test speech and music presets separately with representative program material.
+Run the controlled session from the app directory after the portable release
+artifact and route matrix are complete:
+
+```powershell
+.\scripts\windows-acoustic-stimulus.ps1 `
+  -DeviceType "Windows Audio (Exclusive Mode)" `
+  -InputDevice "Exact input name" `
+  -OutputDevice "Exact output name" `
+  -InterfaceModel "Interface model" `
+  -DriverVersion "Driver version"
+```
+
+Replace `-DeviceType` with the exact backend name emitted by `list_devices`,
+such as `Windows Audio (Exclusive Mode)`, `DirectSound`, or `ASIO`.
+
+The default `-SecondsPerPhase 600` is the sign-off hold time. The script runs four phases for
+each preset: program-only baseline, one feedback tone, two simultaneous
+feedback tones at different frequencies, and source removal/release. It saves
+the raw JSONL telemetry plus a results file under `windows-validation-output`.
+The two tones must be introduced acoustically through the intended
+microphone/loudspeaker path; do not inject them into the engine's stdin.
 
 1. Raise loop gain slowly until a stable tone begins. Confirm engagement is
    visible in analyzer telemetry and is followed by one bounded notch.
@@ -41,6 +64,24 @@ Test speech and music presets separately with representative program material.
 4. Sweep a sine tone and play sustained music. Confirm broadband/program peaks
    do not accumulate permanent notches.
 5. Repeat with two simultaneous feedback tones and on every enabled mono route.
+
+For each preset, attach these observations to the results file:
+
+- Interface model, backend, driver version, sample rate, actual buffer,
+  input/output gain, and the normalized operating level.
+- Room layout, microphone and loudspeaker positions, program material, and
+  whether the same physical interface supplied input and output.
+- Each tone's approximate frequency, the deepest reported cut, maximum active
+  notch count, and whether both tones were tracked at once.
+- Whether release was gradual after source removal, whether chatter occurred,
+  and whether any click, audible discontinuity, unsafe output, or missed
+  callback deadline was heard.
+
+The engine telemetry is cumulative for each run. `xruns` must remain zero,
+`nonFiniteOutputSamples` must remain zero, `activeNotches` must never exceed
+`maximumAllowedNotches` (six), and `maximumCutDb` must remain no deeper than
+-12 dB for speech or -9 dB for music. A passing automated summary does not
+override a failed audible observation.
 
 Stop and log a failure for any audible discontinuity, non-finite sample, missed
 deadline, unsafe output, unstable delay, false persistent cut, or unbounded cut.
