@@ -35,20 +35,39 @@ inline void routeMono(const float* const* inputs, int inputChannels,
     }
 }
 
-inline void routeCalibration(const float* const* inputs, int inputChannels,
-                             float* const* outputs, int outputChannels, int samples,
-                             Route route, std::span<const float> excitation,
-                             std::span<float> recording, std::size_t position) noexcept {
+inline void routeCalibrationWithAnnouncement(
+    const float* const* inputs, int inputChannels,
+    float* const* outputs, int outputChannels, int samples,
+    Route route, std::span<const float> excitation,
+    std::span<float> recording, std::span<const float> announcement,
+    std::size_t announcementGap, std::size_t position) noexcept {
     for (int output = 0; output < outputChannels; ++output)
         std::fill_n(outputs[output], samples, 0.0f);
     if (route.input < 0 || route.input >= inputChannels ||
         route.output < 0 || route.output >= outputChannels)
         return;
     for (int frame = 0; frame < samples; ++frame) {
-        const auto index = position + static_cast<std::size_t>(frame);
-        if (index < recording.size()) recording[index] = inputs[route.input][frame];
-        outputs[route.output][frame] = index < excitation.size() ? excitation[index] : 0.0f;
+        const auto timelineIndex = position + static_cast<std::size_t>(frame);
+        if (timelineIndex < announcement.size()) {
+            outputs[route.output][frame] = announcement[timelineIndex];
+            continue;
+        }
+        const auto excitationIndex = timelineIndex - announcement.size();
+        if (excitationIndex < announcementGap) continue;
+        const auto recordingIndex = excitationIndex - announcementGap;
+        if (recordingIndex < recording.size())
+            recording[recordingIndex] = inputs[route.input][frame];
+        outputs[route.output][frame] = recordingIndex < excitation.size()
+            ? excitation[recordingIndex] : 0.0f;
     }
+}
+
+inline void routeCalibration(const float* const* inputs, int inputChannels,
+                             float* const* outputs, int outputChannels, int samples,
+                             Route route, std::span<const float> excitation,
+                             std::span<float> recording, std::size_t position) noexcept {
+    routeCalibrationWithAnnouncement(inputs, inputChannels, outputs, outputChannels, samples,
+        route, excitation, recording, {}, 0, position);
 }
 
 } // namespace werfeed

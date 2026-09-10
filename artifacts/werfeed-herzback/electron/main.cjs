@@ -14,6 +14,7 @@ const ENGINE_COMMANDS = new Set([
 ]);
 const ENGINE_EVENTS = new Set(['hello', 'devices', 'state', 'telemetry', 'calibration', 'error']);
 const MAX_LINE_BYTES = 1024 * 1024;
+const CALIBRATION_ANNOUNCEMENT = 'calibration-announcement.mp3';
 
 let engine;
 let engineStatus = { state: 'unavailable', reason: 'Engine has not been started.' };
@@ -259,7 +260,13 @@ ipcMain.handle('werfeed-engine:command', (_event, command, payload) => {
   if (!engine || engineStatus.state !== 'running' || !engine.stdin.writable) {
     throw new Error(`Native engine is ${engineStatus.state}${engineStatus.reason ? `: ${engineStatus.reason}` : ''}`);
   }
-  const message = JSON.stringify(payload === undefined ? { type: command } : { type: command, ...payload });
+  const commandPayload = payload === undefined ? {} : { ...payload };
+  if (command === 'start_calibration') {
+    commandPayload.announcementPath = isDevelopment
+      ? path.join(app.getAppPath(), 'public', CALIBRATION_ANNOUNCEMENT)
+      : path.join(process.resourcesPath, CALIBRATION_ANNOUNCEMENT);
+  }
+  const message = JSON.stringify({ type: command, ...commandPayload });
   if (Buffer.byteLength(message) > MAX_LINE_BYTES) throw new Error('Native engine command is too large.');
   engine.stdin.write(`${message}\n`);
   return { accepted: true };

@@ -35,6 +35,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "public/calibration-announcement.mp3",
+        "to": "calibration-announcement.mp3"
       }
     ],
     "asar": true,

@@ -17,12 +17,14 @@ target_compile_features(werfeed-native PRIVATE cxx_std_20)
 target_link_libraries(werfeed-native PRIVATE
   juce::juce_audio_devices
   juce::juce_audio_basics
+  juce::juce_audio_formats
   juce::juce_events)
 target_compile_definitions(werfeed-native PRIVATE
   JUCE_APPLICATION_NAME_STRING="Werfeed Native Engine"
   JUCE_APPLICATION_VERSION_STRING="${PROJECT_VERSION}"
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0
+  JUCE_USE_MP3AUDIOFORMAT=1
   JUCE_DISPLAY_SPLASH_SCREEN=0)
 
 if (WIN32)

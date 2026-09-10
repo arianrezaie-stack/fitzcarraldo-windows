@@ -1,4 +1,5 @@
 #include <juce_audio_devices/juce_audio_devices.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_events/juce_events.h>
 
 #include "Dsp.h"
@@ -182,6 +183,11 @@ public:
         if (!(level > 0.0f && level <= 0.08f)) { calibrationBusy.store(false); error("calibration level must be above 0 and at most 0.08"); return; }
         const auto rate = sampleRate.load();
         if (rate < 8000.0) { calibrationBusy.store(false); error("audio device sample rate is unavailable"); return; }
+        const auto announcementPath = getPropertyOr(command, "announcementPath", "").toString();
+        if (!loadCalibrationAnnouncement(announcementPath, rate, level)) {
+            calibrationBusy.store(false);
+            return;
+        }
         const auto impulseLength = static_cast<std::size_t>(rate * 0.5);
         const auto gapLength = static_cast<std::size_t>(rate * 0.25);
         const auto probe = werfeed::makeDelayProbe(level);
@@ -192,6 +198,10 @@ public:
         std::copy(sweep.begin(), sweep.end(),
                   calibrationExcitation.begin() + static_cast<std::ptrdiff_t>(impulseLength + gapLength));
         calibrationRecording.assign(calibrationExcitation.size() + static_cast<std::size_t>(rate), 0.0f);
+        calibrationAnnouncementGap = calibrationAnnouncement.empty()
+            ? 0 : static_cast<std::size_t>(rate);
+        calibrationTimelineLength = calibrationAnnouncement.size() + calibrationAnnouncementGap
+            + calibrationRecording.size();
         calibrationRoute = route;
         calibrationRouteKey = keyForRoute(route);
         calibrationGeneration = generationCounter.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -221,9 +231,10 @@ public:
         const auto calibrationActive = calibrating.load(std::memory_order_acquire);
         auto calibrationIndex = calibrationPosition.load(std::memory_order_relaxed);
         if (calibrationActive) {
-            werfeed::routeCalibration(input, ins, output, outs, samples,
+            werfeed::routeCalibrationWithAnnouncement(input, ins, output, outs, samples,
                 routes[static_cast<std::size_t>(calibrationRoute)],
-                calibrationExcitation, calibrationRecording, calibrationIndex);
+                calibrationExcitation, calibrationRecording, calibrationAnnouncement,
+                calibrationAnnouncementGap, calibrationIndex);
         } else {
             for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
                 const auto route = routes[static_cast<std::size_t>(routeIndex)];
@@ -237,7 +248,7 @@ public:
         if (calibrationActive) {
             calibrationIndex += static_cast<std::size_t>(samples);
             calibrationPosition.store(calibrationIndex, std::memory_order_relaxed);
-            if (calibrationIndex >= calibrationRecording.size()) {
+            if (calibrationIndex >= calibrationTimelineLength) {
                 calibrating.store(false, std::memory_order_release);
                 completedGeneration.store(calibrationGeneration, std::memory_order_relaxed);
                 calibrationComplete.store(true, std::memory_order_release);
@@ -464,6 +475,57 @@ private:
         if (!calibrationFile.getParentDirectory().createDirectory()) return false;
         return calibrationFile.replaceWithText(juce::JSON::toString(juce::var(root), true));
     }
+    bool loadCalibrationAnnouncement(const juce::String& path, double targetRate, float level) {
+        calibrationAnnouncement.clear();
+        if (path.isEmpty()) return true;
+        const juce::File file(path);
+        if (!file.existsAsFile()) {
+            error("calibration announcement file was not found");
+            return false;
+        }
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+        if (!reader || reader->lengthInSamples <= 0 || reader->numChannels == 0) {
+            error("calibration announcement could not be decoded");
+            return false;
+        }
+        const auto maxSourceSamples = static_cast<juce::int64>(reader->sampleRate * 120.0);
+        if (reader->lengthInSamples > maxSourceSamples) {
+            error("calibration announcement is longer than 120 seconds");
+            return false;
+        }
+        const auto sourceSamples = static_cast<int>(reader->lengthInSamples);
+        juce::AudioBuffer<float> decoded(static_cast<int>(reader->numChannels), sourceSamples);
+        if (!reader->read(&decoded, 0, sourceSamples, 0, true, true)) {
+            error("calibration announcement could not be read");
+            return false;
+        }
+        const auto outputSamples = static_cast<std::size_t>(std::ceil(
+            static_cast<double>(sourceSamples) * targetRate / reader->sampleRate));
+        calibrationAnnouncement.resize(outputSamples);
+        float peak = 0.0f;
+        for (std::size_t outputIndex = 0; outputIndex < outputSamples; ++outputIndex) {
+            const auto sourcePosition = static_cast<double>(outputIndex) * reader->sampleRate / targetRate;
+            const auto left = std::min(sourceSamples - 1, static_cast<int>(sourcePosition));
+            const auto right = std::min(sourceSamples - 1, left + 1);
+            const auto fraction = static_cast<float>(sourcePosition - left);
+            float sample = 0.0f;
+            for (int channel = 0; channel < decoded.getNumChannels(); ++channel) {
+                const auto interpolated = decoded.getSample(channel, left) * (1.0f - fraction)
+                    + decoded.getSample(channel, right) * fraction;
+                sample += interpolated;
+            }
+            sample /= static_cast<float>(decoded.getNumChannels());
+            calibrationAnnouncement[outputIndex] = sample;
+            peak = std::max(peak, std::abs(sample));
+        }
+        if (peak > level && level > 0.0f) {
+            const auto scale = level / peak;
+            for (auto& sample : calibrationAnnouncement) sample *= scale;
+        }
+        return true;
+    }
     juce::String keyForRoute(int routeIndex) const {
         if (routeIndex < 0 || routeIndex >= routeCount) return {};
         const auto route = routes[static_cast<std::size_t>(routeIndex)];
@@ -531,7 +593,8 @@ private:
     std::atomic<unsigned long long> generationCounter { 0 }, completedGeneration { 0 };
     unsigned long long calibrationGeneration = 0;
     int calibrationRoute = 0;
-    std::vector<float> calibrationExcitation, calibrationRecording;
+    std::vector<float> calibrationExcitation, calibrationRecording, calibrationAnnouncement;
+    std::size_t calibrationAnnouncementGap = 0, calibrationTimelineLength = 0;
     juce::File calibrationFile;
     juce::String routeBaseKey;
     juce::String calibrationRouteKey;

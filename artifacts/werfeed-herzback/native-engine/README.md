@@ -93,7 +93,11 @@ Commands are `list_devices`, `configure`, `start`, `stop`, `set_protection`,
 `enabled` and a `speech` or `music` preset. A route-specific suppression amount
 is set with `{"route":0,"suppression":0.75}` and remains in the range 0–1.
 Calibration accepts a zero-based route and a safe normalized level no higher
-than 0.08. Events use `type`:
+than 0.08. The Electron desktop bridge adds the bundled
+`calibration-announcement.mp3` path to this command. The native engine plays
+that announcement on the selected route output, normalizes only peaks above
+the calibration level, waits one second in silence, and then emits the impulse
+and sweep. Events use `type`:
 `hello`, `devices`, `state`, `telemetry`, `calibration`, `test_marker`, or
 `error`.
 Routes are ordered, independent mono channel maps, summed when sharing an

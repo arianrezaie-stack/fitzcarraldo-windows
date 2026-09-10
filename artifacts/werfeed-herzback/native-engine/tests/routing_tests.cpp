@@ -29,6 +29,26 @@ int main() {
     assert(out1 == excitation);
     assert(std::equal(in0.begin(), in0.end(), recording.begin()));
 
+    // The optional announcement plays on the selected output, then a silent
+    // one-second gap precedes the measured calibration excitation.
+    std::array<float, 2> announcement { 0.7f, 0.8f };
+    std::array<float, 2> announcedExcitation { 0.2f, 0.3f };
+    std::array<float, 4> announcedRecording {};
+    out0.fill(9.0f); out1.fill(9.0f);
+    werfeed::routeCalibrationWithAnnouncement(inputs, 2, outputs, 2, 2, { 0, 1 },
+        announcedExcitation, announcedRecording, announcement, 2, 0);
+    assert((std::array<float, 2> { out0[0], out0[1] } == std::array<float, 2> { 0, 0 }));
+    assert((std::array<float, 2> { out1[0], out1[1] } == announcement));
+    out0.fill(9.0f); out1.fill(9.0f);
+    werfeed::routeCalibrationWithAnnouncement(inputs, 2, outputs, 2, 2, { 0, 1 },
+        announcedExcitation, announcedRecording, announcement, 2, 2);
+    assert((std::array<float, 2> { out1[0], out1[1] } == std::array<float, 2> { 0, 0 }));
+    out0.fill(9.0f); out1.fill(9.0f);
+    werfeed::routeCalibrationWithAnnouncement(inputs, 2, outputs, 2, 4, { 0, 1 },
+        announcedExcitation, announcedRecording, announcement, 2, 4);
+    assert((out1 == std::array<float, 4> { 0.2f, 0.3f, 0, 0 }));
+    assert(std::equal(in0.begin(), in0.end(), announcedRecording.begin()));
+
     // A four-channel interface can carry four independent mono routes in the
     // same callback. Route order is preserved even when the mappings cross.
     std::array<float, 4> in2 { -0.6f, -0.7f, -0.8f, -0.9f };
