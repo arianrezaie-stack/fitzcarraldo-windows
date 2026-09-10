@@ -14,3 +14,9 @@ JUCE Windows endpoints can report a valid active-channel mask while returning an
 **Why:** The renderer cannot populate mappings when native discovery drops an endpoint solely because its driver omitted human-readable channel names.
 
 **How to apply:** Keep the native channel index authoritative; use reported names when present and `Input channel N` / `Output channel N` only when the driver omits labels.
+
+Native discovery scans every active endpoint exposed by the selected JUCE backend; transport classification is descriptive metadata rather than a discovery gate.
+
+**Why:** Users need to map any connected active interface, including endpoints whose Windows names do not contain a recognizable USB or Ethernet token.
+
+**How to apply:** Retain transport and eligibility metadata for diagnostics, but do not discard an endpoint before channel enumeration solely because its transport cannot be inferred from the name.

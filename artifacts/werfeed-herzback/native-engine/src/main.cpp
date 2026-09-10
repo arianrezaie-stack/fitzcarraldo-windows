@@ -567,7 +567,6 @@ private:
     void addDevice(juce::Array<juce::var>& devices, juce::AudioIODeviceType& type, const juce::String& name, bool input) {
         const auto eligibility = werfeed::classifyDeviceTransport(
             type.getTypeName().toStdString(), name.toStdString());
-        if (!eligibility.allowed) return;
         auto* d = new juce::DynamicObject();
         auto device = std::unique_ptr<juce::AudioIODevice>(
             type.createDevice(input ? name : juce::String(), input ? juce::String() : name));
@@ -586,7 +585,10 @@ private:
         d->setProperty("interfaceName", interfaceNameFor(name));
         d->setProperty("direction", input ? "input" : "output");
         d->setProperty("transport", werfeed::deviceTransportLabel(eligibility.transport));
-        d->setProperty("hardwareEligible", true);
+        // Discovery covers every active endpoint. Transport classification is
+        // retained as metadata for the UI and evidence, but it must not hide
+        // a connected interface before the user can map it.
+        d->setProperty("hardwareEligible", eligibility.allowed);
         d->setProperty("channels", channelCount);
         juce::Array<juce::var> channelLabels;
         for (int channel = 0; channel < channelCount; ++channel) {
