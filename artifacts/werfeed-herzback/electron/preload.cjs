@@ -44,5 +44,13 @@ contextBridge.exposeInMainWorld('werfeedDesktop', {
     },
     onEvent: (listener) => subscribe('werfeed-engine:event', listener),
     onStatus: (listener) => subscribe('werfeed-engine:status', listener),
+    validation: Object.freeze({
+      reportDevices: (devices, pairs) => {
+        if (!Array.isArray(devices) || !Array.isArray(pairs)) {
+          throw new TypeError('Invalid device validation report.');
+        }
+        ipcRenderer.send('werfeed-validation:devices', { devices, pairs });
+      },
+    }),
   }),
 });
