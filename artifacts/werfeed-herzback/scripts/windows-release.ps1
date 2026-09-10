@@ -13,10 +13,13 @@ $EngineRoot = Join-Path $AppRoot "native-engine"
 $BuildRoot = Join-Path $EngineRoot "build-windows"
 $EvidenceRoot = Join-Path $AppRoot "windows-validation-output"
 $StagingRoot = Join-Path $AppRoot "engine\win32-x64"
-$BuildMode = if ($AsioSdkPath) { "asio" } else { "wasapi" }
+$BuildMode = if ($AsioSdkPath) { "asio" } else { "multi-backend" }
 $TranscriptPath = Join-Path $EvidenceRoot "build-transcript-$BuildMode.txt"
 $EnumerationPath = Join-Path $EvidenceRoot "device-enumeration-$BuildMode.jsonl"
 $NativeLogPath = Join-Path $EvidenceRoot "native-commands-$BuildMode.log"
+$PortableValidationPath = Join-Path $EvidenceRoot "portable-startup-$BuildMode.jsonl"
+$PortableEngineOutputPath = Join-Path $EvidenceRoot "portable-engine-output-$BuildMode.jsonl"
+$BuildIdentifierPath = Join-Path $EvidenceRoot "portable-build-identifier-$BuildMode.json"
 $Phase = "initialization"
 $TranscriptStarted = $false
 
@@ -44,7 +47,9 @@ function Invoke-NativeLogged {
 }
 
 New-Item -ItemType Directory -Force -Path $EvidenceRoot, $StagingRoot | Out-Null
-Remove-Item -Force -ErrorAction SilentlyContinue $TranscriptPath, $EnumerationPath, $NativeLogPath
+Remove-Item -Force -ErrorAction SilentlyContinue `
+    $TranscriptPath, $EnumerationPath, $NativeLogPath, $PortableValidationPath,
+    $PortableEngineOutputPath, $BuildIdentifierPath
 Start-Transcript -Path $TranscriptPath
 $TranscriptStarted = $true
 
@@ -64,7 +69,6 @@ try {
         "-A", $Architecture,
         "-DBUILD_TESTING=ON"
     )
-
     if ($AsioSdkPath) {
         $AsioHeader = Join-Path $AsioSdkPath "common\asio.h"
         if (-not (Test-Path $AsioHeader)) {
@@ -72,8 +76,6 @@ try {
         }
         $CmakeArguments += "-DWERFEED_ENABLE_ASIO=ON"
         $CmakeArguments += "-DWERFEED_ASIO_SDK_PATH=$AsioSdkPath"
-    } else {
-        $CmakeArguments += "-DWERFEED_ENABLE_ASIO=OFF"
     }
 
     $Phase = "native engine configuration"
@@ -123,6 +125,58 @@ try {
         throw "Electron packaging did not produce an x64 portable executable."
     }
 
+    $Phase = "packaged portable startup validation"
+    Write-Host "Launching the fresh portable executable and validating the renderer device selector..."
+    $env:WERFEED_VALIDATION_OUTPUT = $PortableValidationPath
+    $env:WERFEED_VALIDATION_ENGINE_OUTPUT = $PortableEngineOutputPath
+    try {
+        $ValidationProcess = Start-Process -FilePath $Portable.FullName -PassThru -WindowStyle Hidden
+        if (-not $ValidationProcess.WaitForExit(45000)) {
+            $ValidationProcess.Kill()
+            throw "Portable startup validation timed out after 45 seconds."
+        }
+        if ($ValidationProcess.ExitCode -ne 0) {
+            throw "Portable startup validation exited with code $($ValidationProcess.ExitCode)."
+        }
+    } finally {
+        Remove-Item Env:WERFEED_VALIDATION_OUTPUT -ErrorAction SilentlyContinue
+        Remove-Item Env:WERFEED_VALIDATION_ENGINE_OUTPUT -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path $PortableValidationPath)) {
+        throw "Portable startup validation did not produce $PortableValidationPath."
+    }
+    $ValidationRecords = @(Get-Content -Path $PortableValidationPath | ForEach-Object { $_ | ConvertFrom-Json })
+    if (@($ValidationRecords | Where-Object { $_.type -eq "engine_protocol_error" }).Count -gt 0) {
+        throw "Portable startup emitted ENGINE_PROTOCOL_ERROR. See $PortableValidationPath."
+    }
+    $ValidationResult = $ValidationRecords | Where-Object { $_.type -eq "validation_result" } | Select-Object -Last 1
+    if (-not $ValidationResult -or $ValidationResult.pass -ne $true) {
+        throw "Portable startup validation did not pass. See $PortableValidationPath."
+    }
+    $RendererDevices = $ValidationRecords | Where-Object { $_.type -eq "renderer_devices" } | Select-Object -Last 1
+    if (-not $RendererDevices) {
+        throw "The packaged renderer did not report a devices event."
+    }
+    if ([int]$RendererDevices.pairCount -lt 1) {
+        Write-Warning "The validation runner reported no compatible audio device pair; hardware validation must run on the target Windows machine."
+    }
+
+    $PortableHash = (Get-FileHash -Algorithm SHA256 $Portable.FullName).Hash
+    $EngineHash = (Get-FileHash -Algorithm SHA256 $BuiltEngine).Hash
+    [ordered]@{
+        packageVersion = (Get-Content (Join-Path $AppRoot "package.json") | ConvertFrom-Json).version
+        portableArtifact = $Portable.Name
+        portablePath = $Portable.FullName
+        portableBytes = $Portable.Length
+        portableSha256 = $PortableHash
+        engineArtifact = "werfeed-engine.exe"
+        engineSha256 = $EngineHash
+        rendererDevicePairs = [int]$RendererDevices.pairCount
+        hardwareAvailable = ([int]$RendererDevices.pairCount -gt 0)
+        validationEvidence = (Split-Path -Leaf $PortableValidationPath)
+        exactEngineOutput = (Split-Path -Leaf $PortableEngineOutputPath)
+    } | ConvertTo-Json | Set-Content $BuildIdentifierPath
+
     Get-FileHash -Algorithm SHA256 $BuiltEngine, $Portable.FullName |
         Format-Table Path, Hash -AutoSize |
         Out-String -Width 4096 |
@@ -130,13 +184,15 @@ try {
 
     @"
 Complete these hardware checks before sign-off:
-[ ] WASAPI device names appear in device-enumeration.jsonl.
-[ ] ASIO device names appear after an ASIO-enabled build.
+[ ] Portable executable starts and displays the control surface.
+[ ] Requested WASAPI input/output names appear in hardware-device-enumeration-*.jsonl.
 [ ] Mono pass-through works for 1, 2, 3, 4, 5, 6, 7, and 8 routes.
 [ ] Tested at 48 kHz with 64, 128, and 256-sample buffers.
 [ ] Each buffer setting ran for 30 minutes without unsafe output.
-[ ] Device disconnect stops routing and never selects another output silently.
-[ ] Record interface model, driver version, measured delay, CPU, and xruns below.
+[ ] Disconnect test emits device_stopped and never selects another output silently.
+[ ] hardware-matrix-*.csv records actual rate, buffer, callback CPU, and xruns.
+[ ] hardware-session-*-results.txt records measured delay and tester notes.
+[ ] acoustic-stimulus-*-results.txt records speech/music one- and two-tone telemetry, release, and tester notes.
 
 Interface:
 Driver/mode:
