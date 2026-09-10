@@ -3,6 +3,7 @@
 #include <juce_events/juce_events.h>
 
 #include "Dsp.h"
+#include "DevicePolicy.h"
 #include "Routing.h"
 #include <atomic>
 #include <chrono>
@@ -564,16 +565,24 @@ private:
         }
     }
     void addDevice(juce::Array<juce::var>& devices, juce::AudioIODeviceType& type, const juce::String& name, bool input) {
+        const auto eligibility = werfeed::classifyDeviceTransport(
+            type.getTypeName().toStdString(), name.toStdString());
+        if (!eligibility.allowed) return;
         auto* d = new juce::DynamicObject();
         auto device = std::unique_ptr<juce::AudioIODevice>(
             type.createDevice(input ? name : juce::String(), input ? juce::String() : name));
-        const auto channelCount = device ? (input ? device->getInputChannelNames().size()
-                                                   : device->getOutputChannelNames().size()) : 0;
+        const auto channelNames = device ? (input ? device->getInputChannelNames()
+                                                   : device->getOutputChannelNames()) : juce::StringArray {};
         d->setProperty("deviceType", type.getTypeName());
         d->setProperty("name", name);
         d->setProperty("interfaceName", interfaceNameFor(name));
         d->setProperty("direction", input ? "input" : "output");
-        d->setProperty("channels", channelCount);
+        d->setProperty("transport", werfeed::deviceTransportLabel(eligibility.transport));
+        d->setProperty("hardwareEligible", true);
+        d->setProperty("channels", channelNames.size());
+        juce::Array<juce::var> channelLabels;
+        for (const auto& channelName : channelNames) channelLabels.add(channelName);
+        d->setProperty("channelNames", juce::var(channelLabels));
         devices.add(juce::var(d));
     }
     juce::String interfaceNameFor(const juce::String& rawName) const {

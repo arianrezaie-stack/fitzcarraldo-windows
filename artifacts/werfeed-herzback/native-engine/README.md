@@ -32,6 +32,14 @@ cmake -S . -B build -DWERFEED_ENABLE_ASIO=ON -DWERFEED_ASIO_SDK_PATH=C:\sdk\asio
 The selected device type is the selected backend. Werfeed does not relabel an
 ASIO or DirectSound device as WASAPI.
 
+Device discovery is intentionally limited to live-sound transports. Records
+must identify USB in the native endpoint or driver name, or identify an
+approved audio-over-Ethernet protocol: Dante, Waves SoundGrid, AES67, RAVENNA,
+or AVB. Built-in motherboard audio, HDMI/DisplayPort, Bluetooth, virtual
+cables, loopback devices, and common virtual ASIO drivers are excluded before
+they reach the renderer. Every emitted record includes `transport: "USB"` or
+`transport: "Ethernet audio"` and `hardwareEligible: true`.
+
 For a complete MSVC build, test, device-enumeration capture, and Electron
 portable package, run this from the app directory in PowerShell:
 
@@ -81,11 +89,15 @@ hold for each phase; use a smaller value only for a smoke test.
 
 ## Protocol
 
-`{"type":"list_devices"}` reports input/output device records, including the
-available channel count and an `interfaceName` family label for each endpoint.
-The renderer exposes every reported backend/interface and mono input/output
-pairing in each route selector, while retaining the endpoint `name` values for
-native configuration. Configure before start, for example:
+`{"type":"list_devices"}` reports only eligible input/output device records,
+including the transport label, available channel count, channel labels when the
+backend provides them, and an `interfaceName` family label for each endpoint.
+The renderer exposes all reported mono inputs and outputs in the audio backend
+panel. Selecting a route loads that route's two channel choices; route cards
+show the selected values without duplicating the controls. The endpoint `name`
+values are retained for native configuration, and all armed routes must use the
+exact same physical input/output device pair and backend. Configure before
+start, for example:
 
 ```json
 {"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":4,"outputChannels":4,"routes":[{"input":0,"output":0,"enabled":true,"suppression":0.75},{"input":1,"output":1,"enabled":true,"suppression":0.75},{"input":2,"output":2,"enabled":true,"suppression":0.75},{"input":3,"output":3,"enabled":true,"suppression":0.75}]}
@@ -114,7 +126,8 @@ non-finite input/output sample counts, and input/output peaks. Each telemetry
 event also has a monotonically increasing sequence number. Device
 configuration and route changes are deliberately rejected while running to keep
 callback memory immutable.
-All device types compiled into the native engine are enumerated and accepted.
+All compiled backends are enumerated, but only eligible live-sound transports
+are emitted as selectable device records.
 
 Calibration emits a bounded impulse followed by a two-second 20 Hz–20 kHz
 logarithmic sweep, finds loop delay with normalized cross-correlation, and
