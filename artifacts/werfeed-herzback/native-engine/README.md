@@ -85,7 +85,7 @@ hold for each phase; use a smaller value only for a smoke test.
 available channel count for each endpoint. Configure before start, for example:
 
 ```json
-{"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":2,"outputChannels":2,"routes":[{"input":0,"output":1,"enabled":true,"suppression":0.75},{"input":1,"output":0,"enabled":true,"suppression":0.75}]}
+{"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":4,"outputChannels":4,"routes":[{"input":0,"output":0,"enabled":true,"suppression":0.75},{"input":1,"output":1,"enabled":true,"suppression":0.75},{"input":2,"output":2,"enabled":true,"suppression":0.75},{"input":3,"output":3,"enabled":true,"suppression":0.75}]}
 ```
 
 Commands are `list_devices`, `configure`, `start`, `stop`, `set_protection`,

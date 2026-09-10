@@ -28,4 +28,21 @@ int main() {
     assert((out0 == std::array<float, 4> { 0, 0, 0, 0 }));
     assert(out1 == excitation);
     assert(std::equal(in0.begin(), in0.end(), recording.begin()));
+
+    // A four-channel interface can carry four independent mono routes in the
+    // same callback. Route order is preserved even when the mappings cross.
+    std::array<float, 4> in2 { -0.6f, -0.7f, -0.8f, -0.9f };
+    std::array<float, 4> in3 { 0.9f, 0.8f, 0.7f, 0.6f };
+    std::array<float, 4> out2 { 0, 0, 0, 0 }, out3 { 0, 0, 0, 0 };
+    const float* fourInputs[] = { in0.data(), in1.data(), in2.data(), in3.data() };
+    float* fourOutputs[] = { out0.data(), out1.data(), out2.data(), out3.data() };
+    routes[0] = { 0, 3 };
+    routes[1] = { 1, 2 };
+    routes[2] = { 2, 1 };
+    routes[3] = { 3, 0 };
+    werfeed::routeMono(fourInputs, 4, fourOutputs, 4, 4, routes, 4);
+    assert(out0 == in3);
+    assert(out1 == in2);
+    assert(out2 == in1);
+    assert(out3 == in0);
 }
