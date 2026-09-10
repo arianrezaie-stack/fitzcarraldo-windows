@@ -19,6 +19,39 @@ version, sample rate, buffer size, measured delay, callback CPU, and xrun count.
 Use one physical interface for input and output unless the devices are
 externally clocked.
 
+## Device filtering and route-slot capture
+
+Run the route session on a Windows machine with at least one connected USB
+interface and at least one available built-in, HDMI, Bluetooth, or virtual
+endpoint:
+
+```powershell
+.\scripts\windows-hardware-session.ps1 `
+  -DeviceType "Windows Audio (Exclusive Mode)" `
+  -InputDevice "Exact USB input name" `
+  -OutputDevice "Exact USB output name" `
+  -InterfaceModel "Interface model" `
+  -DriverVersion "Driver version" `
+  -SecondsPerRouteCount 5
+```
+
+Use the default 1800-second route hold for sign-off; the shorter value above is
+only a smoke test. The session saves both the Windows endpoint inventory and
+the native `devices` event. The evidence validator requires every emitted
+record to have an exact device name, input/output direction, a positive channel
+count, channel labels when supplied by the driver, `hardwareEligible: true`, and
+`USB` or `Ethernet audio` transport metadata. It also fails if blocked
+built-in, HDMI/DisplayPort, Bluetooth, or virtual endpoint text reaches the
+renderer, or if the live inventory does not contain USB plus a built-in or
+virtual endpoint to exercise the filter.
+
+The same session runs four mono route slots on the selected exact input/output
+device pair with enabled states `true, false, true, false`. The saved
+`route-stability-*.jsonl` evidence must show four stable route indices in every
+telemetry event, including the disabled slots. This is separate from the
+1-through-8 route matrix so a compacted route list cannot hide an indexing
+regression.
+
 1. Run at 48 kHz with 64, 128, and 256-sample buffers for 30 minutes each.
    Record the smallest stable setting rather than assuming every endpoint
    accepts the requested buffer.
@@ -69,6 +102,8 @@ For each preset, attach these observations to the results file:
 
 - Interface model, backend, driver version, sample rate, actual buffer,
   input/output gain, and the normalized operating level.
+- The captured audio endpoint inventory, emitted eligible device records, and
+  route-stability evidence must be attached to the Windows session output.
 - Room layout, microphone and loudspeaker positions, program material, and
   whether the same physical interface supplied input and output.
 - Each tone's approximate frequency, the deepest reported cut, maximum active

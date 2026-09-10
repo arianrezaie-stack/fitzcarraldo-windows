@@ -39,7 +39,8 @@ inline DeviceTransportDecision classifyDeviceTransport(std::string_view deviceTy
     constexpr std::string_view blocked[] {
         "bluetooth", "hdmi", "displayport", "display audio", "stereo mix",
         "voicemeeter", "vb-audio", "asio4all", "fl studio asio", "loopback",
-        "virtual audio", "virtual cable", "blackhole"
+        "virtual audio", "virtual cable", "blackhole", "realtek high definition",
+        "high definition audio", "built-in", "built in", "onboard"
     };
     for (const auto token : blocked)
         if (containsDeviceText(combined, token))

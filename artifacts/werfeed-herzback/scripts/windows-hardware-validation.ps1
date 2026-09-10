@@ -8,7 +8,8 @@ param(
     [int[]]$BufferSizes = @(64, 128, 256),
     [int]$ExpectedSampleRate = 48000,
     [double]$MaximumCallbackCpu = 1.0,
-    [string]$EvidenceRoot = ""
+    [string]$EvidenceRoot = "",
+    [switch]$RequireUsbInterface
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,10 +26,13 @@ $ResultsPath = Join-Path $EvidenceRoot "hardware-session-$SafeDeviceType-results
 $MatrixPath = Join-Path $EvidenceRoot "hardware-matrix-$SafeDeviceType.csv"
 $MetadataPath = Join-Path $EvidenceRoot "hardware-session-$SafeDeviceType-metadata.json"
 $EnumerationPath = Join-Path $EvidenceRoot "hardware-device-enumeration-$SafeDeviceType.jsonl"
+$EndpointInventoryPath = Join-Path $EvidenceRoot "audio-endpoint-inventory-$SafeDeviceType.json"
+$RouteStabilityPath = Join-Path $EvidenceRoot "route-stability-$SafeDeviceType.jsonl"
 $ReportPath = Join-Path $EvidenceRoot "hardware-validation-$SafeDeviceType.txt"
 
 $Failures = @()
 $Warnings = @()
+$Devices = @()
 
 function Add-Failure {
     param([string]$Message)
@@ -233,6 +237,86 @@ if ($DeviceEvent.Count -eq 0) {
     if ($Devices.Count -eq 0) {
         Add-Failure "Device enumeration devices event contains no devices."
     }
+    $HasUsbRecord = $false
+    $BlockedOutputTokens = @(
+        "bluetooth", "hdmi", "displayport", "display audio", "stereo mix",
+        "voicemeeter", "vb-audio", "asio4all", "fl studio asio", "loopback",
+        "virtual audio", "virtual cable", "blackhole", "realtek high definition",
+        "high definition audio", "onboard audio", "built-in audio", "built in audio"
+    )
+    foreach ($Device in $Devices) {
+        $Context = "Emitted device record"
+        $DeviceTypeValue = [string](Get-PropertyValue $Device "deviceType")
+        $NameValue = [string](Get-PropertyValue $Device "name")
+        $DirectionValue = [string](Get-PropertyValue $Device "direction")
+        $TransportValue = [string](Get-PropertyValue $Device "transport")
+        $InterfaceValue = [string](Get-PropertyValue $Device "interfaceName")
+        $ChannelsValue = 0.0
+        $NameLower = "$DeviceTypeValue $NameValue".ToLowerInvariant()
+
+        if ([string]::IsNullOrWhiteSpace($DeviceTypeValue)) {
+            Add-Failure "$Context is missing deviceType."
+        }
+        if ([string]::IsNullOrWhiteSpace($NameValue) -or $NameValue -ne $NameValue.Trim()) {
+            Add-Failure "$Context has a missing or non-exact device name '$NameValue'."
+        }
+        if ($DirectionValue -notin @("input", "output")) {
+            Add-Failure "$Context has unusable direction '$DirectionValue'."
+        }
+        if ([string]::IsNullOrWhiteSpace($InterfaceValue)) {
+            Add-Failure "$Context is missing interfaceName."
+        }
+        if (-not (Test-BooleanTrue (Get-PropertyValue $Device "hardwareEligible") "hardwareEligible" $Context)) {
+            # The helper already recorded the actionable failure.
+        }
+        if (-not (Convert-ToDouble (Get-PropertyValue $Device "channels") `
+                "channels" $Context ([ref]$ChannelsValue))) {
+            continue
+        }
+        if ($ChannelsValue -le 0 -or $ChannelsValue -ne [math]::Truncate($ChannelsValue)) {
+            Add-Failure "$Context reports unusable channel count '$ChannelsValue'."
+        }
+        $ChannelNamesValue = Get-PropertyValue $Device "channelNames"
+        if ($null -eq $ChannelNamesValue) {
+            Add-Failure "$Context is missing channelNames."
+        } else {
+            $ChannelNames = @($ChannelNamesValue)
+            foreach ($ChannelName in $ChannelNames) {
+                if ($null -ne $ChannelName -and $ChannelName -isnot [string]) {
+                    Add-Failure "$Context contains a non-text channel label."
+                }
+            }
+            if ($ChannelNames.Count -gt [int]$ChannelsValue) {
+                Add-Failure "$Context contains more channel labels than channels."
+            }
+        }
+        if ($TransportValue -notin @("USB", "Ethernet audio")) {
+            Add-Failure "$Context has unsupported transport '$TransportValue'."
+        } elseif ($TransportValue -eq "USB") {
+            $HasUsbRecord = $true
+            if ($NameLower -notmatch '\busb\b') {
+                Add-Failure "$Context is labeled USB but its native type/name has no USB marker."
+            }
+        } else {
+            if ($NameLower -notmatch 'dante|sound\s*grid|aes67|ravenna|avb|audio over ethernet') {
+                Add-Failure "$Context is labeled Ethernet audio without an approved transport marker."
+            }
+        }
+        foreach ($BlockedToken in $BlockedOutputTokens) {
+            if ($NameLower.Contains($BlockedToken)) {
+                Add-Failure "$Context leaked blocked endpoint text '$BlockedToken'."
+            }
+        }
+    }
+    if ($RequireUsbInterface -and -not $HasUsbRecord) {
+        Add-Failure "Live device enumeration contains no eligible USB record."
+    }
+    if (@($Devices | Where-Object { [string](Get-PropertyValue $_ "direction") -eq "input" }).Count -eq 0) {
+        Add-Failure "Device enumeration contains no eligible input record."
+    }
+    if (@($Devices | Where-Object { [string](Get-PropertyValue $_ "direction") -eq "output" }).Count -eq 0) {
+        Add-Failure "Device enumeration contains no eligible output record."
+    }
     $MatchingInputs = @($Devices | Where-Object {
         [string](Get-PropertyValue $_ "direction") -eq "input" -and
         [string](Get-PropertyValue $_ "name") -eq $InputDevice
@@ -246,6 +330,36 @@ if ($DeviceEvent.Count -eq 0) {
     })
     if ($OutputDevice -and $MatchingOutputs.Count -eq 0) {
         Add-Failure "Device enumeration does not contain requested output '$OutputDevice'."
+    }
+}
+
+# The native event intentionally contains only eligible records. Capture the
+# Windows endpoint inventory separately so a live run proves that filtering was
+# exercised against a machine with both a USB interface and a built-in or
+# virtual endpoint available to the operating system.
+$EndpointInventory = @()
+if (-not (Test-Path -LiteralPath $EndpointInventoryPath -PathType Leaf)) {
+    Add-Failure "Audio endpoint inventory is missing: $EndpointInventoryPath"
+} else {
+    try {
+        $EndpointInventory = @(Get-Content -LiteralPath $EndpointInventoryPath -Raw | ConvertFrom-Json)
+    } catch {
+        Add-Failure "Audio endpoint inventory is not valid JSON: $EndpointInventoryPath"
+    }
+    if ($EndpointInventory.Count -eq 0) {
+        Add-Failure "Audio endpoint inventory contains no Windows audio endpoints."
+    }
+}
+if ($EndpointInventory.Count -gt 0) {
+    $InventoryText = ($EndpointInventory | ForEach-Object {
+        "$(Get-PropertyValue $_ 'friendlyName') $(Get-PropertyValue $_ 'instanceId')"
+    }) -join " | "
+    $InventoryLower = $InventoryText.ToLowerInvariant()
+    if ($InventoryLower -notmatch '\busb\b') {
+        Add-Failure "Audio endpoint inventory contains no USB endpoint."
+    }
+    if ($InventoryLower -notmatch 'realtek|high definition|built[- ]in|onboard|bluetooth|hdmi|displayport|virtual|loopback|cable|voicemeeter') {
+        Add-Failure "Audio endpoint inventory contains no built-in or virtual endpoint to exercise exclusion filtering."
     }
 }
 
@@ -402,6 +516,61 @@ foreach ($ExpectedCase in $ExpectedCases.Keys) {
     }
 }
 
+# A dedicated four-slot run proves that disabled route positions do not shift
+# when multiple mono routes share the exact configured device pair.
+$StabilityEvents = @()
+if (-not (Test-Path -LiteralPath $RouteStabilityPath -PathType Leaf)) {
+    Add-Failure "Route stability evidence is missing: $RouteStabilityPath"
+} else {
+    $StabilityLineNumber = 0
+    foreach ($Line in @(Get-Content -LiteralPath $RouteStabilityPath)) {
+        $StabilityLineNumber++
+        $Trimmed = $Line.Trim()
+        if (-not $Trimmed -or $Trimmed.StartsWith("#")) {
+            continue
+        }
+        try {
+            [void]($StabilityEvents += ($Trimmed | ConvertFrom-Json))
+        } catch {
+            Add-Failure "Route stability evidence contains invalid JSON at line $StabilityLineNumber."
+        }
+    }
+}
+$StabilityTelemetry = @($StabilityEvents | Where-Object {
+    [string](Get-PropertyValue $_ "type") -eq "telemetry"
+})
+if ($StabilityTelemetry.Count -eq 0) {
+    Add-Failure "Route stability evidence contains no telemetry events."
+} else {
+    foreach ($TelemetryEvent in $StabilityTelemetry) {
+        $RouteTelemetry = @(Get-PropertyValue $TelemetryEvent "routeTelemetry")
+        if ($RouteTelemetry.Count -ne 4) {
+            Add-Failure "Route stability telemetry must contain exactly four route slots."
+            continue
+        }
+        foreach ($ExpectedRoute in @(
+            @{ route = 1; enabled = $true },
+            @{ route = 2; enabled = $false },
+            @{ route = 3; enabled = $true },
+            @{ route = 4; enabled = $false }
+        )) {
+            $ObservedRoute = $RouteTelemetry | Where-Object {
+                [int](Get-PropertyValue $_ "route") -eq $ExpectedRoute.route
+            } | Select-Object -First 1
+            if ($null -eq $ObservedRoute) {
+                Add-Failure "Route stability telemetry is missing route $($ExpectedRoute.route)."
+                continue
+            }
+            $ObservedEnabled = Get-PropertyValue $ObservedRoute "enabled"
+            if ($null -eq $ObservedEnabled) {
+                Add-Failure "Route $($ExpectedRoute.route) is missing its enabled state."
+            } elseif ([bool]$ObservedEnabled -ne $ExpectedRoute.enabled) {
+                Add-Failure "Route $($ExpectedRoute.route) changed enabled state; expected $($ExpectedRoute.enabled)."
+            }
+        }
+    }
+}
+
 # Results must preserve measured delay and both sides of the disconnect check.
 $ResultsText = ""
 if (-not (Test-Path -LiteralPath $ResultsPath -PathType Leaf)) {
@@ -448,6 +617,8 @@ $ReportLines += "Device type: $DeviceType"
 $ReportLines += "Expected sample rate: $ExpectedSampleRate Hz"
 $ReportLines += "Expected matrix cases: $($ExpectedCases.Count)"
 $ReportLines += "Recorded matrix rows: $($Rows.Count)"
+$ReportLines += "Eligible device records checked: $(@($Devices).Count)"
+$ReportLines += "Route stability telemetry events: $($StabilityTelemetry.Count)"
 if ($Warnings.Count -gt 0) {
     $ReportLines += ""
     $ReportLines += "Warnings:"

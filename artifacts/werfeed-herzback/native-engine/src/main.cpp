@@ -573,15 +573,24 @@ private:
             type.createDevice(input ? name : juce::String(), input ? juce::String() : name));
         const auto channelNames = device ? (input ? device->getInputChannelNames()
                                                    : device->getOutputChannelNames()) : juce::StringArray {};
+        const auto channelCount = device ? (input ? device->getTotalNumInputChannels()
+                                                    : device->getTotalNumOutputChannels()) : 0;
+        // An eligible transport is not selectable unless JUCE can open the
+        // endpoint and report at least one channel. Do not send unusable
+        // records to the renderer where they would otherwise disappear only
+        // after the device selector has been built.
+        if (!device || channelCount <= 0) return;
         d->setProperty("deviceType", type.getTypeName());
         d->setProperty("name", name);
         d->setProperty("interfaceName", interfaceNameFor(name));
         d->setProperty("direction", input ? "input" : "output");
         d->setProperty("transport", werfeed::deviceTransportLabel(eligibility.transport));
         d->setProperty("hardwareEligible", true);
-        d->setProperty("channels", channelNames.size());
+        d->setProperty("channels", channelCount);
         juce::Array<juce::var> channelLabels;
-        for (const auto& channelName : channelNames) channelLabels.add(channelName);
+        for (int channel = 0; channel < channelCount; ++channel) {
+            channelLabels.add(channel < channelNames.size() ? channelNames[channel] : juce::String());
+        }
         d->setProperty("channelNames", juce::var(channelLabels));
         devices.add(juce::var(d));
     }

@@ -26,6 +26,8 @@ $Results = Join-Path $EvidenceRoot "hardware-session-$SafeDeviceType-results.txt
 $MatrixPath = Join-Path $EvidenceRoot "hardware-matrix-$SafeDeviceType.csv"
 $MetadataPath = Join-Path $EvidenceRoot "hardware-session-$SafeDeviceType-metadata.json"
 $EnumerationPath = Join-Path $EvidenceRoot "hardware-device-enumeration-$SafeDeviceType.jsonl"
+$EndpointInventoryPath = Join-Path $EvidenceRoot "audio-endpoint-inventory-$SafeDeviceType.json"
+$RouteStabilityPath = Join-Path $EvidenceRoot "route-stability-$SafeDeviceType.jsonl"
 $ValidationReportPath = Join-Path $EvidenceRoot "hardware-validation-$SafeDeviceType.txt"
 
 if (-not (Test-Path $Engine)) {
@@ -34,7 +36,8 @@ if (-not (Test-Path $Engine)) {
 
 New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
 Remove-Item -Force -ErrorAction SilentlyContinue `
-    $SessionLog, $Results, $MatrixPath, $MetadataPath, $EnumerationPath, $ValidationReportPath
+    $SessionLog, $Results, $MatrixPath, $MetadataPath, $EnumerationPath,
+    $EndpointInventoryPath, $RouteStabilityPath, $ValidationReportPath
 
 Write-Host "SAFETY: Set output gain to minimum and keep a physical mute within reach."
 $SafetyReady = Read-Host "Type READY when the test area is safe"
@@ -92,8 +95,45 @@ $Metadata = [ordered]@{
     portableExecutable = (Resolve-Path $PortableExecutable).Path
     portableStartupConfirmed = $true
     tester = $Tester
+    endpointInventory = (Split-Path -Leaf $EndpointInventoryPath)
 }
 $Metadata | ConvertTo-Json -Depth 5 | Set-Content $MetadataPath
+
+Write-Host "Capturing the Windows audio endpoint inventory used to exercise filtering..."
+$EndpointInventory = @()
+try {
+    $EndpointInventory = @(
+        Get-PnpDevice -Class AudioEndpoint -ErrorAction Stop |
+            ForEach-Object {
+                [pscustomobject][ordered]@{
+                    friendlyName = [string]$_.FriendlyName
+                    instanceId = [string]$_.InstanceId
+                    status = [string]$_.Status
+                    class = [string]$_.Class
+                }
+            }
+    )
+} catch {
+    try {
+        $EndpointInventory = @(
+            Get-CimInstance Win32_SoundDevice -ErrorAction Stop |
+                ForEach-Object {
+                    [pscustomobject][ordered]@{
+                        friendlyName = [string]$_.Name
+                        instanceId = [string]$_.PNPDeviceID
+                        status = [string]$_.Status
+                        class = "Win32_SoundDevice"
+                    }
+                }
+        )
+    } catch {
+        throw "Unable to capture Windows audio endpoint inventory: $($_.Exception.Message)"
+    }
+}
+if ($EndpointInventory.Count -eq 0) {
+    throw "Windows reported no audio endpoints; USB and built-in/virtual filtering cannot be confirmed."
+}
+$EndpointInventory | ConvertTo-Json -Depth 5 | Set-Content $EndpointInventoryPath
 
 $EnumerationStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $EnumerationStartInfo.FileName = $Engine
@@ -155,6 +195,7 @@ if ($MatchingInput.Count -eq 0 -or $MatchingOutput.Count -eq 0) {
     "Tester: $Tester"
     "Portable startup: PASS"
     "Device enumeration: PASS ($EnumerationPath)"
+    "Audio endpoint inventory: $EndpointInventoryPath"
     ""
 ) | Set-Content $Results
 
@@ -264,6 +305,87 @@ foreach ($BufferSize in $BufferSizes) {
 
 $SummaryRows | Export-Csv -Path $MatrixPath -NoTypeInformation
 
+# Exercise multiple mono routes on the same exact device pair with disabled
+# slots between enabled slots. The native telemetry must preserve those slot
+# indices rather than compacting the route list.
+$StabilityConfigure = @{
+    type = "configure"
+    deviceType = $DeviceType
+    inputDevice = $InputDevice
+    outputDevice = $OutputDevice
+    sampleRate = 48000
+    bufferSize = 128
+    inputChannels = 2
+    outputChannels = 2
+    routes = @(
+        @{ input = 0; output = 0; enabled = $true; suppression = 0.75 }
+        @{ input = -1; output = -1; enabled = $false; suppression = 0.75 }
+        @{ input = 1; output = 1; enabled = $true; suppression = 0.75 }
+        @{ input = -1; output = -1; enabled = $false; suppression = 0.75 }
+    )
+} | ConvertTo-Json -Compress -Depth 5
+$StabilityStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+$StabilityStartInfo.FileName = $Engine
+$StabilityStartInfo.UseShellExecute = $false
+$StabilityStartInfo.CreateNoWindow = $true
+$StabilityStartInfo.RedirectStandardInput = $true
+$StabilityStartInfo.RedirectStandardOutput = $true
+$StabilityStartInfo.RedirectStandardError = $true
+$StabilityProcess = [System.Diagnostics.Process]::new()
+$StabilityProcess.StartInfo = $StabilityStartInfo
+if (-not $StabilityProcess.Start()) {
+    throw "Unable to start the native engine for route stability validation."
+}
+$StabilityStdoutTask = $StabilityProcess.StandardOutput.ReadToEndAsync()
+$StabilityStderrTask = $StabilityProcess.StandardError.ReadToEndAsync()
+$StabilityProcess.StandardInput.WriteLine($StabilityConfigure)
+$StabilityProcess.StandardInput.WriteLine('{"type":"start"}')
+$StabilityProcess.StandardInput.Flush()
+Start-Sleep -Seconds 3
+$StabilityProcess.StandardInput.WriteLine('{"type":"stop"}')
+$StabilityProcess.StandardInput.Close()
+if (-not $StabilityProcess.WaitForExit(10000)) {
+    $StabilityProcess.Kill()
+    throw "Native engine did not exit after route stability validation."
+}
+$StabilityStdout = $StabilityStdoutTask.Result
+$StabilityStderr = $StabilityStderrTask.Result
+Set-Content $RouteStabilityPath $StabilityStdout.TrimEnd()
+if ($StabilityStderr) {
+    Add-Content $RouteStabilityPath "# stderr: $($StabilityStderr.TrimEnd())"
+}
+$StabilityEvents = @(
+    $StabilityStdout -split '\r?\n' |
+        Where-Object { $_.Trim() } |
+        ForEach-Object {
+            try { $_ | ConvertFrom-Json } catch { $null }
+        } |
+        Where-Object { $_ -ne $null }
+)
+$StabilityTelemetry = @($StabilityEvents | Where-Object { $_.type -eq "telemetry" })
+if ($StabilityTelemetry.Count -eq 0) {
+    throw "Route stability validation produced no telemetry. See $RouteStabilityPath"
+}
+$ExpectedRouteStates = @{
+    1 = $true
+    2 = $false
+    3 = $true
+    4 = $false
+}
+foreach ($TelemetryEvent in $StabilityTelemetry) {
+    $RouteTelemetry = @($TelemetryEvent.routeTelemetry)
+    if ($RouteTelemetry.Count -ne 4) {
+        throw "Route stability telemetry did not contain exactly four route slots. See $RouteStabilityPath"
+    }
+    foreach ($ExpectedRoute in $ExpectedRouteStates.Keys) {
+        $ObservedRoute = $RouteTelemetry | Where-Object { [int]$_.route -eq $ExpectedRoute } | Select-Object -First 1
+        if ($null -eq $ObservedRoute -or [bool]$ObservedRoute.enabled -ne $ExpectedRouteStates[$ExpectedRoute]) {
+            throw "Route $ExpectedRoute changed enabled state during stability validation. See $RouteStabilityPath"
+        }
+    }
+}
+Add-Content $Results "Route stability: PASS ($RouteStabilityPath)"
+
 $Delay = Read-Host "Measured round-trip delay in milliseconds (enter N/A if calibration was not run)"
 
 $DisconnectConfigure = @{
@@ -348,6 +470,7 @@ $Validator = Join-Path $PSScriptRoot "windows-hardware-validation.ps1"
     -OutputDevice $OutputDevice `
     -BufferSizes $BufferSizes `
     -ExpectedSampleRate 48000 `
+    -RequireUsbInterface `
     -EvidenceRoot $EvidenceRoot
 
 Write-Host "Hardware route session complete."

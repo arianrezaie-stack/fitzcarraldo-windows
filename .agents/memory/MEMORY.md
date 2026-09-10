@@ -6,3 +6,4 @@
 - [Windows CI has no audio hardware](windows-ci-audio-hardware.md) — release validation must separate protocol success from physical device availability.
 - [Per-route feedback protection](per-route-feedback-protection.md) — keep route indices stable; expose independent telemetry/calibration and tune fast speech detection separately from music persistence.
 - [Native route mapping](native-route-mapping.md) — enumerate mono channels from native endpoint records; keep route cards read-only and edit the active route from one shared I/O panel.
+- [Windows live-capture tooling](windows-live-capture.md) — this Linux workspace may lack CMake and PowerShell; physical endpoint validation belongs on Windows.

@@ -186,6 +186,9 @@ try {
 Complete these hardware checks before sign-off:
 [ ] Portable executable starts and displays the control surface.
 [ ] Requested WASAPI input/output names appear in hardware-device-enumeration-*.jsonl.
+[ ] Target capture includes a USB endpoint plus a built-in or virtual endpoint in audio-endpoint-inventory-*.json.
+[ ] Every emitted device record has direction, positive channels, channel labels when available, exact name, and USB/Ethernet transport metadata.
+[ ] route-stability-*.jsonl keeps disabled route slots at their original indices.
 [ ] Mono pass-through works for 1, 2, 3, 4, 5, 6, 7, and 8 routes.
 [ ] Tested at 48 kHz with 64, 128, and 256-sample buffers.
 [ ] Each buffer setting ran for 30 minutes without unsafe output.
