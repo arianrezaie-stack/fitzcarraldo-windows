@@ -147,12 +147,15 @@ public:
     }
 
     float process(float sample) noexcept {
+        if (!std::isfinite(sample)) return 0.0f;
         analyze(sample);
         auto wet = sample;
         for (auto& state : states) wet = state.process(wet);
+        if (!std::isfinite(wet)) wet = 0.0f;
         const auto targetMix = isEnabled() ? 1.0f : 0.0f;
         wetMix += (targetMix - wetMix) * 0.0015f;
-        return sample + wetMix * (wet - sample);
+        const auto output = sample + wetMix * (wet - sample);
+        return std::isfinite(output) ? output : 0.0f;
     }
 
     ProtectionSnapshot snapshot() const noexcept {
