@@ -8,6 +8,9 @@ FetchContent_Declare(JUCE
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(JUCE)
 
+option(WERFEED_ENABLE_ASIO "Enable ASIO support with a locally supplied Steinberg ASIO SDK" OFF)
+set(WERFEED_ASIO_SDK_PATH "" CACHE PATH "Path to the ASIO SDK root (contains common/asio.h)")
+
 add_executable(werfeed-native src/main.cpp)
 set_target_properties(werfeed-native PROPERTIES OUTPUT_NAME "werfeed-engine")
 target_compile_features(werfeed-native PRIVATE cxx_std_20)
@@ -25,8 +28,21 @@ target_compile_definitions(werfeed-native PRIVATE
 if (WIN32)
   target_compile_definitions(werfeed-native PRIVATE
     JUCE_WASAPI=1
-    JUCE_ASIO=0
-    JUCE_DIRECTSOUND=0)
+    JUCE_DIRECTSOUND=1)
+  if (WERFEED_ENABLE_ASIO)
+    if (NOT EXISTS "${WERFEED_ASIO_SDK_PATH}/common/asio.h")
+      message(FATAL_ERROR "WERFEED_ENABLE_ASIO requires WERFEED_ASIO_SDK_PATH with common/asio.h.")
+    endif()
+    target_include_directories(werfeed-native PRIVATE
+      "${WERFEED_ASIO_SDK_PATH}/common"
+      "${WERFEED_ASIO_SDK_PATH}/host"
+      "${WERFEED_ASIO_SDK_PATH}/host/pc")
+    target_compile_definitions(werfeed-native PRIVATE JUCE_ASIO=1)
+  else()
+    target_compile_definitions(werfeed-native PRIVATE JUCE_ASIO=0)
+  endif()
+elseif (WERFEED_ENABLE_ASIO)
+  message(FATAL_ERROR "ASIO support is only available in the Windows native build.")
 endif()
 
 include(CTest)
