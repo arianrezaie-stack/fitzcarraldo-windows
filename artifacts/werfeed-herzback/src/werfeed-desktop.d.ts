@@ -10,6 +10,9 @@ declare global {
         command: (command: 'list_devices' | 'configure' | 'start' | 'stop' | 'set_protection' | 'start_calibration', payload?: Record<string, unknown>) => Promise<{ accepted: true }>;
         onEvent: (listener: (event: unknown) => void) => () => void;
         onStatus: (listener: (status: { state: string; reason?: string }) => void) => () => void;
+        validation?: {
+          reportDevices: (devices: unknown[], pairs: unknown[]) => void;
+        };
       };
     };
   }
