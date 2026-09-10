@@ -1,0 +1,7 @@
+
+Path                                                                                                                             Hash
+----                                                                                                                             ----
+D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\Release\werfeed-engine.exe 113589A9399B9A609FA441CD2CCC812958FA6948A7AC92D8DC6C002917A0B2CC
+D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\desktop-dist\Werfeed-Herzback-0.1.4-x64.exe            7E36738686700473168176748264EE7658D98E9CC1F751DC40A35AAFC6341DCF
+
+
