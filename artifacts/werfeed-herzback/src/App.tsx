@@ -124,6 +124,7 @@ function AudioMappingPanel({
   route,
   inputOptions,
   outputOptions,
+  nativeBridgeAvailable,
   nativeReady,
   audioRunning,
   onInputChange,
@@ -136,6 +137,7 @@ function AudioMappingPanel({
   route: Route;
   inputOptions: AudioChannelOption[];
   outputOptions: AudioChannelOption[];
+  nativeBridgeAvailable: boolean;
   nativeReady: boolean;
   audioRunning: boolean;
   onInputChange: (key: string) => void;
@@ -150,10 +152,10 @@ function AudioMappingPanel({
     <p className="section-note">Choose the active route's mono input and output here. Switching routes loads that route's saved mapping; every armed route must still use one shared interface/backend.</p>
     <div className="mapping-controls">
       <label className="mapping-field"><span>Mono input</span><select value={route.inputKey} disabled={!nativeReady || audioRunning || !inputOptions.length} onChange={(event) => onInputChange(event.target.value)} aria-label={`Route ${activeRoute + 1} mono input`}>
-        {inputOptions.length ? inputOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>) : <option value="">No native mono inputs reported</option>}
+        {inputOptions.length ? inputOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>) : <option value="">{nativeBridgeAvailable ? 'No native mono inputs reported' : 'Open the Windows desktop app to map native audio'}</option>}
       </select></label>
       <label className="mapping-field"><span>Mono output</span><select value={route.outputKey} disabled={!nativeReady || audioRunning || !outputOptions.length} onChange={(event) => onOutputChange(event.target.value)} aria-label={`Route ${activeRoute + 1} mono output`}>
-        {outputOptions.length ? outputOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>) : <option value="">No native mono outputs reported</option>}
+        {outputOptions.length ? outputOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>) : <option value="">{nativeBridgeAvailable ? 'No native mono outputs reported' : 'Open the Windows desktop app to map native audio'}</option>}
       </select></label>
     </div>
     <div className="detail-row"><span>Shared interface basis</span><strong>{sharedDescription}</strong></div>
@@ -465,7 +467,7 @@ function Home() {
       </div>
     </header>
     <main className="main-content section-stack">
-      <AudioMappingPanel activeRoute={activeRoute} route={activeRouteState} inputOptions={activeInputOptions} outputOptions={activeOutputOptions} nativeReady={nativeReady} audioRunning={audioRunning} onInputChange={(key) => updateActiveRouteChannel('input', key)} onOutputChange={(key) => updateActiveRouteChannel('output', key)} sharedDescription={sharedCompatibilityKey && sharedInputOption ? `${backendLabel(sharedInputOption.deviceType)} · ${sharedInputOption.interfaceName}` : mappingCompatibilityKey ? 'Other routes limited to the selected interface' : inputOptions.length && outputOptions.length ? 'Choose an input and output on a route to lock the shared clock' : 'Native engine has not reported eligible mono channel records'} buffer={buffer} onBufferChange={setBuffer} />
+      <AudioMappingPanel activeRoute={activeRoute} route={activeRouteState} inputOptions={activeInputOptions} outputOptions={activeOutputOptions} nativeBridgeAvailable={!!bridge} nativeReady={nativeReady} audioRunning={audioRunning} onInputChange={(key) => updateActiveRouteChannel('input', key)} onOutputChange={(key) => updateActiveRouteChannel('output', key)} sharedDescription={sharedCompatibilityKey && sharedInputOption ? `${backendLabel(sharedInputOption.deviceType)} · ${sharedInputOption.interfaceName}` : mappingCompatibilityKey ? 'Other routes limited to the selected interface' : !bridge ? 'Open the Windows desktop app to access native audio devices' : inputOptions.length && outputOptions.length ? 'Choose an input and output on a route to lock the shared clock' : 'Native engine has not reported eligible mono channel records'} buffer={buffer} onBufferChange={setBuffer} />
       <section className="panel routing-panel">
         <div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> mono routing</div><h3 className="section-title">Four simultaneous routes</h3><p className="section-note">Choose a route to edit its mapping above. The first selected interface limits every other route so all armed paths share one hardware clock.</p></div></div>
         <div className="route-grid">{routes.map((route) => { const routeInfo = telemetry.routeTelemetry?.find((item) => item.route === route.id); const calibrated = routeInfo?.calibrated || Boolean(calibrations[route.id]); const selection = routeSelection(route); return <div className={`route-card ${route.id === activeRoute + 1 ? 'selected' : ''} ${route.enabled ? '' : 'muted'}`} key={route.id}><button type="button" className="route-card-top" disabled={!nativeReady} onClick={() => setActiveRoute(route.id - 1)} aria-pressed={route.id === activeRoute + 1}><span className={`route-dot ${route.enabled ? 'locked' : ''}`} /><span className="channel">ROUTE {route.id}</span><span className="route-select-label">{route.id === activeRoute + 1 ? 'viewing' : 'select'}</span></button><div className="route-name">Route {route.id} mono bus pair</div><RouteMappingSummary input={selection.input} output={selection.output} /><div className="route-meta"><span>{route.enabled ? 'armed path' : 'standby'}</span><label className="route-arm"><input type="checkbox" checked={route.enabled} disabled={audioRunning || !nativeReady} onChange={() => setRoutes((items) => items.map((item) => item.id === route.id ? { ...item, enabled: !item.enabled } : item))} /><span>arm</span></label></div><div className="route-card-bottom"><span>{route.enabled ? 'processing' : 'disabled'}</span><span>{calibrated ? 'baseline saved' : 'needs calibration'}</span></div></div>; })}</div>
