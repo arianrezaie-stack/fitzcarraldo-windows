@@ -81,11 +81,11 @@ hold for each phase; use a smaller value only for a smoke test.
 
 ## Protocol
 
-`{"type":"list_devices"}` reports input/output device records. Configure before
-start, for example:
+`{"type":"list_devices"}` reports input/output device records, including the
+available channel count for each endpoint. Configure before start, for example:
 
 ```json
-{"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":4,"outputChannels":4,"routes":[{"input":0,"output":0,"enabled":true,"suppression":0.75},{"input":1,"output":1,"enabled":true,"suppression":0.75},{"input":2,"output":2,"enabled":true,"suppression":0.75},{"input":3,"output":3,"enabled":true,"suppression":0.75}]}
+{"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":2,"outputChannels":2,"routes":[{"input":0,"output":1,"enabled":true,"suppression":0.75},{"input":1,"output":0,"enabled":true,"suppression":0.75}]}
 ```
 
 Commands are `list_devices`, `configure`, `start`, `stop`, `set_protection`,
@@ -96,7 +96,10 @@ Calibration accepts a zero-based route and a safe normalized level no higher
 than 0.08. Events use `type`:
 `hello`, `devices`, `state`, `telemetry`, `calibration`, `test_marker`, or
 `error`.
-Routes are ordered, mono, summed when sharing an output, and limited to eight.
+Routes are ordered, independent mono channel maps, summed when sharing an
+output, and limited to eight. The physical input/output device pair and
+backend are shared by the engine so all routes use one stable device clock;
+each route can independently select its input channel and output channel.
 While running, status events are capped at 10 Hz and expose actual device rate,
 buffer size, callback CPU fraction, local deadline overruns, cumulative
 non-finite input/output sample counts, and input/output peaks. Each telemetry

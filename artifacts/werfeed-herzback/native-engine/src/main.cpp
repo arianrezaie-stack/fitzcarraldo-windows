@@ -9,6 +9,7 @@
 #include <iostream>
 #include <mutex>
 #include <map>
+#include <memory>
 #include <span>
 #include <string>
 #include <thread>
@@ -94,7 +95,7 @@ public:
         const auto outChannels = static_cast<int>(getPropertyOr(command, "outputChannels", 8));
         setup.inputChannels.setRange(0, juce::jlimit(0, 64, inChannels), true);
         setup.outputChannels.setRange(0, juce::jlimit(0, 64, outChannels), true);
-        if (!parseRoutes(command.getProperty("routes"))) return;
+        if (!parseRoutes(command.getProperty("routes"), inChannels, outChannels)) return;
         const auto result = manager.initialise(inChannels, outChannels, nullptr, true, {}, &setup);
         if (result.isNotEmpty()) { error(result); return; }
         routeBaseKey = typeName + "|" + inputName + "|" + outputName;
@@ -478,19 +479,33 @@ private:
     }
     void addDevice(juce::Array<juce::var>& devices, juce::AudioIODeviceType& type, const juce::String& name, bool input) {
         auto* d = new juce::DynamicObject();
-        d->setProperty("deviceType", type.getTypeName()); d->setProperty("name", name);
-        d->setProperty("direction", input ? "input" : "output"); devices.add(juce::var(d));
+        auto device = std::unique_ptr<juce::AudioIODevice>(
+            type.createDevice(input ? name : juce::String(), input ? juce::String() : name));
+        const auto channelCount = device ? (input ? device->getInputChannelNames().size()
+                                                   : device->getOutputChannelNames().size()) : 0;
+        d->setProperty("deviceType", type.getTypeName());
+        d->setProperty("name", name);
+        d->setProperty("direction", input ? "input" : "output");
+        d->setProperty("channels", channelCount);
+        devices.add(juce::var(d));
     }
-    bool parseRoutes(const juce::var& value) {
+    bool parseRoutes(const juce::var& value, int inputChannels, int outputChannels) {
         auto* array = value.getArray();
         if (array == nullptr || array->size() > static_cast<int>(werfeed::maxRoutes)) { error("routes must be an array of at most 8 pairs"); return false; }
         for (int i = 0; i < array->size(); ++i) {
             auto* r = array->getReference(i).getDynamicObject();
             if (!r) { error("each route must be an object"); return false; }
             const auto enabled = static_cast<bool>(getPropertyOr(*r, "enabled", true));
+            const auto inputChannel = enabled ? static_cast<int>(r->getProperty("input")) : -1;
+            const auto outputChannel = enabled ? static_cast<int>(r->getProperty("output")) : -1;
+            if (enabled && (inputChannel < 0 || inputChannel >= inputChannels ||
+                            outputChannel < 0 || outputChannel >= outputChannels)) {
+                error("enabled route channel is outside the configured mono channel range");
+                return false;
+            }
             routes[static_cast<size_t>(i)] = {
-                enabled ? static_cast<int>(r->getProperty("input")) : -1,
-                enabled ? static_cast<int>(r->getProperty("output")) : -1
+                inputChannel,
+                outputChannel
             };
             routeSuppression[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(
                 getPropertyOr(*r, "suppression", 0.75)));
