@@ -3,7 +3,8 @@
 GPLv3 C++20 console sidecar for direct, low-latency mono routing, acoustic
 calibration, and bounded adaptive feedback suppression.
 It communicates using one JSON object per stdin line and one event per stdout
-line; stdout is protocol-only (diagnostics should be captured outside it).
+line; stdout is protocol-only. JUCE and device-driver diagnostics are redirected
+to stderr so they cannot corrupt the Electron protocol.
 
 ## Build
 
@@ -16,11 +17,20 @@ cmake --build build --config Release
 ctest --test-dir build --output-on-failure
 ```
 
-Werfeed is WASAPI-only. JUCE's ASIO and DirectSound backends are disabled.
-WASAPI Exclusive Mode is preferred for the lowest practical latency; WASAPI
-Shared Mode remains available as a compatibility fallback. Use the same
-physical interface for capture and playback because independent devices can
-drift unless their clocks are synchronized externally.
+The default Windows build includes WASAPI and DirectSound. WASAPI Exclusive
+Mode is preferred for the lowest practical latency; WASAPI Shared Mode remains
+available as a compatibility fallback. Use the same physical interface for
+capture and playback because independent devices can drift unless their clocks
+are synchronized externally.
+
+ASIO is optional because the Steinberg SDK must be supplied separately:
+
+```powershell
+cmake -S . -B build -DWERFEED_ENABLE_ASIO=ON -DWERFEED_ASIO_SDK_PATH=C:\sdk\asiosdk
+```
+
+The selected device type is the selected backend. Werfeed does not relabel an
+ASIO or DirectSound device as WASAPI.
 
 For a complete MSVC build, test, device-enumeration capture, and Electron
 portable package, run this from the app directory in PowerShell:
@@ -32,20 +42,42 @@ portable package, run this from the app directory in PowerShell:
 The script writes evidence to `windows-validation-output` and the distributable
 to `desktop-dist`. Omit `-AsioSdkPath` for the initial WASAPI-only pass.
 
-After checking `device-enumeration-wasapi.jsonl` and
-`device-enumeration-asio.jsonl` for the exact names, exercise the
-physical mono routes (repeat once for WASAPI and once for ASIO):
+After checking the captured WASAPI enumeration for the exact names, exercise
+the physical mono routes:
 
 ```powershell
 .\scripts\windows-hardware-session.ps1 `
   -DeviceType "Windows Audio" `
   -InputDevice "Exact input name" `
-  -OutputDevice "Exact output name"
+  -OutputDevice "Exact output name" `
+  -InterfaceModel "Interface model" `
+  -DriverVersion "Driver version"
 ```
 
-The session runs 1 through 8 one-to-one mono routes and asks for an audible
-pass/fail confirmation after each run. Keep output gain low and a physical mute
-within reach.
+The session launches the latest portable executable, confirms startup, then
+runs 1 through 8 one-to-one mono routes at 48 kHz for 64, 128, and 256-sample
+buffers. It records the actual device rate and buffer, maximum callback CPU,
+maximum local xrun estimate, engine errors, audible pass/fail, and tester
+metadata in `windows-validation-output`. Use a smaller
+`-SecondsPerRouteCount` only for a smoke test; the sign-off matrix uses the
+30-minute default. Keep output gain low and a physical mute within reach.
+
+For live protection sign-off, run the acoustic stimulus session after the
+route matrix:
+
+```powershell
+.\scripts\windows-acoustic-stimulus.ps1 `
+  -DeviceType "Windows Audio (Exclusive Mode)" `
+  -InputDevice "Exact input name" `
+  -OutputDevice "Exact output name" `
+  -InterfaceModel "Interface model" `
+  -DriverVersion "Driver version"
+```
+
+It exercises speech and music program material through program-only, one-tone,
+two-tone, and source-removal phases, then records raw telemetry and tester
+notes. The default `-SecondsPerPhase 600` provides the required 10-minute
+hold for each phase; use a smaller value only for a smoke test.
 
 ## Protocol
 
@@ -57,16 +89,19 @@ start, for example:
 ```
 
 Commands are `list_devices`, `configure`, `start`, `stop`, `set_protection`,
-and `start_calibration`. Protection accepts `enabled` and a `speech` or `music`
-preset. Calibration accepts a zero-based route and a safe normalized level no
-higher than 0.08. Events use `type`: `hello`, `devices`, `state`, `telemetry`,
-`calibration`, or `error`.
+`start_calibration`, and the validation-only `test_marker`. Protection accepts
+`enabled` and a `speech` or `music` preset. Calibration accepts a zero-based
+route and a safe normalized level no higher than 0.08. Events use `type`:
+`hello`, `devices`, `state`, `telemetry`, `calibration`, `test_marker`, or
+`error`.
 Routes are ordered, mono, summed when sharing an output, and limited to eight.
 While running, status events are capped at 10 Hz and expose actual device rate,
-buffer size, callback CPU fraction, local deadline overruns, and input/output
-peaks. Device configuration and route changes are deliberately rejected while
-running to keep callback memory immutable.
-Only device types whose JUCE name starts with `Windows Audio` are accepted.
+buffer size, callback CPU fraction, local deadline overruns, cumulative
+non-finite input/output sample counts, and input/output peaks. Each telemetry
+event also has a monotonically increasing sequence number. Device
+configuration and route changes are deliberately rejected while running to keep
+callback memory immutable.
+All device types compiled into the native engine are enumerated and accepted.
 
 Calibration emits a bounded impulse followed by a two-second 20 Hz–20 kHz
 logarithmic sweep, finds loop delay with normalized cross-correlation, and
