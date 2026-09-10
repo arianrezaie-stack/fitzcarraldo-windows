@@ -9,6 +9,12 @@ Route indices must remain stable from the renderer through native configuration,
 
 **How to apply:** Send a fixed route array with explicit enabled state, keep per-route suppression and calibration response data, and let the renderer select which route's telemetry to view while all armed processors continue running.
 
+The physical audio backend/device pair is shared, but every route owns an independent mono input-channel to output-channel mapping.
+
+**Why:** One shared device clock keeps realtime routing stable; separate route channel indices provide the requested independent buses without introducing multiple unsynchronized device managers.
+
+**How to apply:** Keep backend/device selection global, expose only mono channel-pair choices per active route, and calculate native channel counts from the highest enabled route channel.
+
 Speech and music protection need different detector timing. A faster speech gate is useful for real feedback, but music needs longer persistence and a sharper tonal threshold to avoid cutting short notes.
 
 **Why:** Reducing persistence globally made transient musical notes engage shallow notches even after the detector had improved its frequency resolution.
