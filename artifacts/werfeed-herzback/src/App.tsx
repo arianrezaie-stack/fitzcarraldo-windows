@@ -58,7 +58,7 @@ function Spectrum({ values = [], notches = [] }: { values?: number[]; notches?: 
     return `${x},${y}`;
   }).join(' ') : '';
   return <div className="spectrum" data-testid="analyzer-spectrum" onMouseMove={updateHover} onMouseLeave={() => setHoverReadout(null)}>
-    <div className="spectrum-grid" /><div className="spectrum-label">{points ? 'Live 96-bin detector · baseline-relative protection' : 'Awaiting native analyzer data'}</div>
+    <div className="spectrum-grid" /><div className="spectrum-label">{points ? 'Live 256-bin detector · baseline-relative protection' : 'Awaiting native analyzer data'}</div>
     {points && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Live spectrum"><polyline className="spectrum-trace" points={points} /></svg>}
     {notches.map((notch) => <i key={`${notch.frequency}-${notch.q}`} className="notch-marker" style={{ left: `${frequencyPosition(notch.frequency)}%` }} title={`${notch.frequency.toFixed(0)} Hz ${notch.depthDb.toFixed(1)} dB`} />)}
     <div className="spectrum-legend"><span><i className="legend-line" /> live spectrum</span><span><i className="legend-cut" /> {notches.length} adaptive cuts</span></div>

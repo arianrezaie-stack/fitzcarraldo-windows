@@ -40,6 +40,7 @@ int main() {
     werfeed::FeedbackProcessor processor;
     processor.prepare(rate);
     processor.setEnabled(true);
+    processor.setSuppressionAmount(1.0f);
     std::array<float, werfeed::analyzerBins> baseline {};
     baseline.fill(-80.0f);
     processor.setBaseline(baseline);
@@ -54,7 +55,7 @@ int main() {
     const auto snapshot = processor.snapshot();
     assert(snapshot.activeNotches > 0);
     assert(snapshot.activeNotches <= static_cast<int>(werfeed::maxNotches));
-    assert(snapshot.maximumCutDb >= -18.1f);
+    assert(snapshot.maximumCutDb >= -12.1f && snapshot.maximumCutDb <= -11.5f);
     const auto active = *std::min_element(snapshot.notches.begin(), snapshot.notches.end(),
         [](const werfeed::NotchSnapshot& a, const werfeed::NotchSnapshot& b) {
             const auto aDistance = a.active ? std::abs(std::log2(a.frequency / 1000.0f)) : 1000.0f;
@@ -81,6 +82,20 @@ int main() {
                 return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.2f;
             }));
     }
+    werfeed::FeedbackProcessor lowTone;
+    lowTone.prepare(rate); lowTone.clearBaseline(); lowTone.setEnabled(true);
+    lowTone.setSuppressionAmount(1.0f);
+    for (int i = 0; i < 144000; ++i)
+        lowTone.process(0.3f * std::sin(2.0f * werfeed::pi * 70.0f * i / 48000.0f));
+    const auto lowSnapshot = lowTone.snapshot();
+    assert(lowSnapshot.activeNotches == 1);
+    assert(lowSnapshot.maximumCutDb <= -11.5f);
+    assert(std::any_of(lowSnapshot.notches.begin(), lowSnapshot.notches.end(),
+        [](const werfeed::NotchSnapshot& notch) {
+            return notch.active && std::abs(notch.frequency - 70.0f) / 70.0f < 0.1f && notch.q < 10.0f;
+        }));
+    for (int i = 0; i < 48000; ++i) lowTone.process(0.0f);
+    assert(lowTone.snapshot().activeNotches == 0);
     werfeed::FeedbackProcessor twoTone;
     twoTone.prepare(rate); twoTone.clearBaseline(); twoTone.setEnabled(true);
     for (int i = 0; i < 144000; ++i) {

@@ -12,7 +12,7 @@
 namespace werfeed {
 
 constexpr float pi = 3.14159265358979323846f;
-constexpr std::size_t analyzerBins = 96;
+constexpr std::size_t analyzerBins = 256;
 constexpr std::size_t maxNotches = 6;
 
 enum class ProtectionPreset { speech, music };
@@ -88,16 +88,40 @@ inline std::array<float, analyzerBins> measureResponse(
     std::array<float, analyzerBins> result {};
     const auto usable = delaySamples >= 0 && static_cast<std::size_t>(delaySamples) < response.size()
         ? response.subspan(static_cast<std::size_t>(delaySamples)) : std::span<const float> {};
+    const auto count = std::min(excitation.size(), usable.size());
+    if (count < 16 || sampleRate <= 0.0) {
+        result.fill(0.0f);
+        return result;
+    }
+    constexpr float startHz = 20.0f;
+    constexpr float endHz = 20000.0f;
+    const auto duration = static_cast<double>(count) / sampleRate;
+    const auto ratio = static_cast<double>(endHz / startHz);
+    const auto logRatio = std::log(ratio);
+    const auto sweepScale = 2.0 * static_cast<double>(pi) * startHz * duration / logRatio;
+    const auto windowSize = std::min<std::size_t>(
+        count, std::max<std::size_t>(256, static_cast<std::size_t>(sampleRate * 0.04)));
     for (std::size_t bin = 0; bin < analyzerBins; ++bin) {
         const auto position = static_cast<float>(bin) / static_cast<float>(analyzerBins - 1);
-        const auto frequency = 20.0f * std::pow(1000.0f, position);
-        double exReal = 0, exImag = 0, reReal = 0, reImag = 0;
-        const auto count = std::min(excitation.size(), usable.size());
-        for (std::size_t n = 0; n < count; ++n) {
-            const auto phase = 2.0 * pi * frequency * static_cast<float>(n) / static_cast<float>(sampleRate);
-            const auto c = std::cos(phase), s = -std::sin(phase);
-            exReal += excitation[n] * c; exImag += excitation[n] * s;
-            reReal += usable[n] * c; reImag += usable[n] * s;
+        const auto frequency = startHz * std::pow(endHz / startHz, position);
+        const auto center = static_cast<std::size_t>(std::clamp(
+            duration * std::log(static_cast<double>(frequency / startHz)) / logRatio * sampleRate,
+            static_cast<double>(windowSize / 2),
+            static_cast<double>(count - windowSize / 2 - 1)));
+        const auto first = center - windowSize / 2;
+        double exReal = 0.0, exImag = 0.0, reReal = 0.0, reImag = 0.0;
+        for (std::size_t n = first; n < first + windowSize && n < count; ++n) {
+            const auto t = static_cast<double>(n) / sampleRate;
+            const auto phase = sweepScale * (std::pow(ratio, t / duration) - 1.0);
+            const auto windowPosition = static_cast<double>(n - first) /
+                static_cast<double>(std::max<std::size_t>(1, windowSize - 1));
+            const auto window = 0.5 - 0.5 * std::cos(2.0 * static_cast<double>(pi) * windowPosition);
+            const auto c = std::cos(phase) * window;
+            const auto s = std::sin(phase) * window;
+            exReal += static_cast<double>(excitation[n]) * c;
+            exImag += static_cast<double>(excitation[n]) * s;
+            reReal += static_cast<double>(usable[n]) * c;
+            reImag += static_cast<double>(usable[n]) * s;
         }
         const auto inputMagnitude = std::hypot(exReal, exImag);
         const auto outputMagnitude = std::hypot(reReal, reImag);
@@ -131,6 +155,9 @@ public:
         detectorSamples = 0;
         analysisBuffer.fill(0.0f);
         persistence.fill(0);
+        growthFrames.fill(0);
+        previousLevel.fill(-120.0f);
+        notchSeen.fill(false);
         states = {};
         spectrumDb.fill(-120.0f);
         for (std::size_t i = 0; i < analyzerBins; ++i) publishedSpectrum[i].store(-120.0f);
@@ -247,8 +274,8 @@ private:
             }
         }
         const auto selectedPreset = preset.load(std::memory_order_relaxed);
-        const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech ? 15.0f : 17.0f;
-        const auto releaseAboveBaseline = engageAboveBaseline - 5.0f;
+        const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech ? 12.0f : 15.0f;
+        notchSeen.fill(false);
         for (std::size_t bin = 0; bin < analyzerBins; ++bin) {
             const auto position = static_cast<float>(bin) / static_cast<float>(analyzerBins - 1);
             const auto frequency = 20.0f * std::pow(1000.0f, position);
@@ -262,9 +289,10 @@ private:
         std::array<std::size_t, maxNotches> candidateBins {};
         std::array<float, maxNotches> candidateScores {};
         candidateScores.fill(-std::numeric_limits<float>::infinity());
-        // A shorter window and a shorter speech gate reduce the time before a
-        // sustained howl is attenuated without removing the persistence check.
-        const auto requiredFrames = selectedPreset == ProtectionPreset::speech ? 2 : 6;
+        // The overlapping hop makes three speech frames about 16 ms apart while
+        // still requiring a stable, rising tonal peak rather than a single
+        // voice or music bin.
+        const auto requiredFrames = selectedPreset == ProtectionPreset::speech ? 2 : 18;
         const auto firstBin = std::max<std::size_t>(2, static_cast<std::size_t>(40.0 * fftSize / sampleRate));
         const auto lastBin = std::min<std::size_t>(fftSize / 2 - 2,
             static_cast<std::size_t>(std::min(20000.0, sampleRate * 0.45) * fftSize / sampleRate));
@@ -276,6 +304,13 @@ private:
             const auto magnitude = 4.0f * std::hypot(fftReal[fftBin], fftImag[fftBin]) /
                                    static_cast<float>(fftSize);
             const auto level = 20.0f * std::log10(magnitude + 1.0e-9f);
+            const auto levelDelta = level - previousLevel[fftBin];
+            if (levelDelta > 0.35f)
+                growthFrames[fftBin] = static_cast<unsigned char>(
+                    std::min<int>(255, growthFrames[fftBin] + 1));
+            else if (growthFrames[fftBin] > 0)
+                --growthFrames[fftBin];
+            previousLevel[fftBin] = level;
             const auto neighborhoodRadius = std::min<std::size_t>(
                 { 8, fftBin - 1, fftSize / 2 - fftBin - 1 });
             double neighborhoodPower = 0.0;
@@ -295,7 +330,15 @@ private:
             const auto tonal = level - neighborhoodLevel;
             const auto tonalThreshold = selectedPreset == ProtectionPreset::music
                 ? 8.0f : (frequency < 350.0f ? 7.0f : 4.0f);
-            if (excess >= engageAboveBaseline && tonal >= tonalThreshold) {
+            const auto leftMagnitude = 4.0f * std::hypot(fftReal[fftBin - 1], fftImag[fftBin - 1]) /
+                                       static_cast<float>(fftSize);
+            const auto rightMagnitude = 4.0f * std::hypot(fftReal[fftBin + 1], fftImag[fftBin + 1]) /
+                                        static_cast<float>(fftSize);
+            const auto localPeak = magnitude >= leftMagnitude && magnitude >= rightMagnitude;
+            const auto risingPeak = growthFrames[fftBin] >= 2;
+            const auto stableStrongPeak = excess >= 24.0f;
+            if (localPeak && excess >= engageAboveBaseline && tonal >= tonalThreshold &&
+                (risingPeak || stableStrongPeak)) {
                 persistence[fftBin] = static_cast<unsigned char>(
                     std::min<int>(255, persistence[fftBin] + 1));
                 if (persistence[fftBin] < requiredFrames) continue;
@@ -320,23 +363,21 @@ private:
         for (const auto candidate : candidateBins) {
             if (candidate == 0) continue;
             const auto distinct = std::none_of(engagedBins.begin(), engagedBins.begin() + engagedCount,
-                [candidate](std::size_t other) { return std::abs(static_cast<int>(other) - static_cast<int>(candidate)) < 4; });
+                [candidate](std::size_t other) { return std::abs(static_cast<int>(other) - static_cast<int>(candidate)) < 2; });
             if (distinct) {
                 engagedBins[engagedCount++] = candidate;
                 engageFrequency(static_cast<float>(candidate * sampleRate / fftSize), selectedPreset);
             }
         }
-        for (auto& notch : states) {
-            if (notch.frequency <= 0 || notch.targetDepthDb >= -0.1f) continue;
-            const auto fftBin = std::clamp<std::size_t>(
-                static_cast<std::size_t>(std::lround(notch.frequency * fftSize / sampleRate)), 1, fftSize / 2 - 1);
-            const auto level = 20.0f * std::log10(
-                4.0f * std::hypot(fftReal[fftBin], fftImag[fftBin]) / static_cast<float>(fftSize) + 1.0e-9f);
-            const auto logPosition = std::log10(notch.frequency / 20.0f) / std::log10(1000.0f);
-            const auto baselineBin = std::clamp<std::size_t>(
-                static_cast<std::size_t>(std::lround(logPosition * (analyzerBins - 1))), 0, analyzerBins - 1);
-            if (level - baseline[baselineBin].load(std::memory_order_relaxed) < releaseAboveBaseline)
-                notch.targetDepthDb = std::min(0.0f, notch.targetDepthDb + 0.25f);
+        for (std::size_t i = 0; i < states.size(); ++i) {
+            auto& notch = states[i];
+            if (notch.frequency <= 0 || notchSeen[i]) continue;
+            // Release from candidate absence as well as level. This prevents a
+            // stale low-frequency notch from re-engaging itself after the room
+            // has gone quiet.
+            notch.targetDepthDb = std::min(0.0f, notch.targetDepthDb + 1.5f);
+            if (notch.targetDepthDb >= -0.1f && notch.currentDepthDb > -0.5f)
+                notch = {};
         }
         for (std::size_t i = 0; i < analyzerBins; ++i)
             publishedSpectrum[i].store(spectrumDb[i], std::memory_order_relaxed);
@@ -345,18 +386,33 @@ private:
             publishedDepth[i].store(states[i].currentDepthDb, std::memory_order_relaxed);
             publishedQ[i].store(states[i].q, std::memory_order_relaxed);
         }
+        std::copy(analysisBuffer.begin() + static_cast<std::ptrdiff_t>(analysisHop),
+                  analysisBuffer.end(), analysisBuffer.begin());
+        detectorSamples = fftSize - analysisHop;
     }
     void engageFrequency(float frequency, ProtectionPreset selectedPreset) noexcept {
         Notch* selected = nullptr;
-        for (auto& notch : states)
-            if (notch.frequency > 0 && std::abs(std::log2(notch.frequency / frequency)) < 0.08f)
+        for (auto& notch : states) {
+            if (notch.frequency > 0 && std::abs(std::log2(notch.frequency / frequency)) < 0.08f) {
                 selected = &notch;
+                break;
+            }
+        }
+        if (!selected) {
+            const auto freeSlot = std::find_if(states.begin(), states.end(),
+                [](const Notch& notch) {
+                    return notch.frequency <= 0 || (notch.targetDepthDb >= -0.1f && notch.currentDepthDb > -0.5f);
+                });
+            if (freeSlot != states.end()) selected = &*freeSlot;
+        }
         if (!selected)
             selected = &*std::max_element(states.begin(), states.end(),
-                [](const Notch& a, const Notch& b) { return a.targetDepthDb < b.targetDepthDb; });
+                [](const Notch& a, const Notch& b) { return a.currentDepthDb < b.currentDepthDb; });
+        const auto selectedIndex = static_cast<std::size_t>(selected - states.data());
+        notchSeen[selectedIndex] = true;
         const auto amount = getSuppressionAmount();
         if (amount <= 0.001f) return;
-        const auto maximumDepth = -amount * (selectedPreset == ProtectionPreset::speech ? 24.0f : 18.0f);
+        const auto maximumDepth = -amount * 12.0f;
         const auto centerBin = std::clamp<std::size_t>(
             static_cast<std::size_t>(std::lround(frequency * fftSize / sampleRate)),
             1, fftSize / 2 - 1);
@@ -371,17 +427,23 @@ private:
         selected->frequency = std::clamp(static_cast<float>(
             (static_cast<float>(centerBin) + interpolation) * sampleRate / fftSize), 40.0f,
             static_cast<float>(sampleRate * 0.45));
-        selected->q = selectedPreset == ProtectionPreset::speech ? 18.0f : 16.0f;
+        selected->q = frequency < 300.0f
+            ? 2.0f + 10.0f * std::clamp(frequency / 300.0f, 0.0f, 1.0f)
+            : (selectedPreset == ProtectionPreset::speech ? 18.0f : 16.0f);
         // Reach useful attenuation on the first engaged frame, then let the
         // next frames move to the route's chosen maximum cut.
         selected->targetDepthDb = std::max(selected->targetDepthDb - 4.5f, maximumDepth);
     }
-    static constexpr std::size_t fftSize = 1024;
+    static constexpr std::size_t fftSize = 2048;
+    static constexpr std::size_t analysisHop = 256;
     double sampleRate = 48000;
     int detectorSamples = 0;
     float wetMix = 0.0f;
     std::array<float, fftSize> analysisBuffer {}, fftReal {}, fftImag {};
     std::array<unsigned char, fftSize / 2> persistence {};
+    std::array<unsigned char, fftSize / 2> growthFrames {};
+    std::array<float, fftSize / 2> previousLevel {};
+    std::array<bool, maxNotches> notchSeen {};
     std::array<float, analyzerBins> spectrumDb {};
     std::array<std::atomic<float>, analyzerBins> baseline {};
     std::array<Notch, maxNotches> states {};

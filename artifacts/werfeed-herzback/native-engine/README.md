@@ -107,14 +107,16 @@ All device types compiled into the native engine are enumerated and accepted.
 
 Calibration emits a bounded impulse followed by a two-second 20 Hz–20 kHz
 logarithmic sweep, finds loop delay with normalized cross-correlation, and
-persists the deconvolved 96-bin response per device route under the user's
+persists the sweep-reference 256-bin response per device route under the user's
 application-data directory. Telemetry exposes `routeTelemetry` for every
 configured route, including its live spectrum, active notches, suppression
 amount, calibration response, and measured delay. The detector uses the
-calibration response as a priority baseline, a faster speech gate, a more
-conservative music gate, and at most six smoothly-ramped notch filters. The
-route suppression amount scales the maximum cut from 0 to -24 dB in speech
-mode or 0 to -18 dB in music mode.
+calibration response as a priority baseline, a fast stable/rising-peak speech
+gate, a more conservative music gate, and at most six smoothly-ramped notch
+filters. Analyzer updates use overlapping 2048-sample FFT windows with 256
+display bins. The route suppression amount scales the maximum cut from 0 to
+-12 dB in both protection modes. Below 300 Hz, notch Q decreases progressively
+to widen the protection band for low-frequency room feedback.
 
 `xruns` is a local callback-deadline estimate, not a driver reported glitch
 counter. Hardware and acoustic tests must be performed on Windows with the
