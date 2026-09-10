@@ -35,7 +35,34 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--wood-0); }
+html {
+  background: var(--wood-0);
+  color-scheme: dark;
+  scrollbar-color: var(--copper) var(--wood-1);
+  scrollbar-width: thin;
+}
+* {
+  scrollbar-color: var(--copper) var(--wood-1);
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar { width: 12px; height: 12px; }
+*::-webkit-scrollbar-track {
+  background: linear-gradient(90deg, #140c09, #211510 58%, #2a1a14);
+  border-left: 1px solid rgba(201, 139, 87, .16);
+}
+*::-webkit-scrollbar-thumb {
+  min-height: 72px;
+  border: 3px solid #1b110d;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--copper-hot), var(--copper));
+  box-shadow: inset 0 0 0 1px rgba(255, 226, 183, .18), 0 0 10px rgba(201, 139, 87, .16);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #efbd7d, var(--copper-hot));
+  box-shadow: inset 0 0 0 1px rgba(255, 235, 205, .3), 0 0 14px rgba(225, 170, 108, .28);
+}
+*::-webkit-scrollbar-thumb:active { background: var(--paper); }
+*::-webkit-scrollbar-corner { background: var(--wood-0); }
 body {
   margin: 0;
   min-width: 320px;
