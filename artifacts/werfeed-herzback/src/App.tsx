@@ -212,7 +212,8 @@ function Home() {
     if (!channelCount) return [];
     const compatibilityKey = interfaceKey(device);
     return Array.from({ length: channelCount }, (_, channel) => {
-      const channelName = device.channelNames?.[channel]?.trim() || `Channel ${channel + 1}`;
+      const channelName = device.channelNames?.[channel]?.trim();
+      if (!channelName) return null;
       return {
         key: `${device.deviceType}\u0000${device.name}\u0000${device.direction}\u0000${channel}`,
         compatibilityKey,
@@ -224,7 +225,7 @@ function Home() {
         channelName,
         label: `${device.transport ? `${device.transport} · ` : ''}${backendLabel(device.deviceType)} · ${interfaceName(device)} · ${channelName}`,
       };
-    });
+    }).filter((option): option is AudioChannelOption => option !== null);
   }), [devices]);
   const inputOptions = useMemo(() => channelOptions.filter((option) => option.direction === 'input'), [channelOptions]);
   const outputOptions = useMemo(() => channelOptions.filter((option) => option.direction === 'output'), [channelOptions]);

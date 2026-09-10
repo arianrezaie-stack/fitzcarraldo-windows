@@ -573,8 +573,11 @@ private:
             type.createDevice(input ? name : juce::String(), input ? juce::String() : name));
         const auto channelNames = device ? (input ? device->getInputChannelNames()
                                                    : device->getOutputChannelNames()) : juce::StringArray {};
-        const auto channelCount = device ? (input ? device->getTotalNumInputChannels()
-                                                    : device->getTotalNumOutputChannels()) : 0;
+        // JUCE exposes the endpoint's channel metadata through the channel
+        // name arrays. AudioIODevice does not provide getTotalNum*Channels().
+        // Keep the records aligned with that API so the Windows build works
+        // across JUCE backends without inventing a second channel count.
+        const auto channelCount = channelNames.size();
         // An eligible transport is not selectable unless JUCE can open the
         // endpoint and report at least one channel. Do not send unusable
         // records to the renderer where they would otherwise disappear only
