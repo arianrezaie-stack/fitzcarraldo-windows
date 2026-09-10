@@ -17,9 +17,19 @@
 namespace {
 std::mutex stdoutMutex;
 
+class StderrLogger final : public juce::Logger {
+public:
+    void logMessage(const juce::String& message) override {
+        std::cerr << message.toStdString() << '\n' << std::flush;
+    }
+};
+
 void emit(const juce::var& event) {
     const std::lock_guard<std::mutex> guard(stdoutMutex);
-    std::cout << juce::JSON::toString(event, false).toStdString() << '\n' << std::flush;
+    // The Electron bridge consumes stdout one line at a time. JUCE's
+    // allOnOneLine flag must be true or a pretty-printed event is split into
+    // invalid partial JSON messages.
+    std::cout << juce::JSON::toString(event, true).toStdString() << '\n' << std::flush;
 }
 void error(const juce::String& message) {
     auto* o = new juce::DynamicObject();
@@ -30,9 +40,6 @@ void error(const juce::String& message) {
 }
 bool getObject(const juce::var& v, juce::DynamicObject*& o) {
     o = v.getDynamicObject(); return o != nullptr;
-}
-bool isWasapiType(const juce::String& typeName) {
-    return typeName.startsWithIgnoreCase("Windows Audio");
 }
 juce::var getPropertyOr(const juce::DynamicObject& object, const char* name, juce::var fallback) {
     const juce::Identifier propertyName(name);
@@ -53,7 +60,6 @@ public:
     void enumerate() {
         juce::Array<juce::var> devices;
         for (auto* type : manager.getAvailableDeviceTypes()) {
-            if (!isWasapiType(type->getTypeName())) continue;
             type->scanForDevices();
             for (const auto& name : type->getDeviceNames(true)) addDevice(devices, *type, name, true);
             for (const auto& name : type->getDeviceNames(false)) addDevice(devices, *type, name, false);
@@ -72,7 +78,6 @@ public:
         const auto inputName = command.getProperty("inputDevice").toString();
         const auto outputName = command.getProperty("outputDevice").toString();
         if (typeName.isEmpty()) { error("configure requires deviceType"); return; }
-        if (!isWasapiType(typeName)) { error("Werfeed supports WASAPI devices only"); return; }
         manager.setCurrentAudioDeviceType(typeName, true);
         if (manager.getCurrentAudioDeviceType() != typeName) {
             error("audio device type unavailable"); return;
@@ -207,8 +212,23 @@ public:
             }
         }
         float peakIn = 0.0f, peakOut = 0.0f;
-        for (int c = 0; c < ins; ++c) for (int n = 0; n < samples; ++n) peakIn = std::max(peakIn, std::abs(input[c][n]));
-        for (int c = 0; c < outs; ++c) for (int n = 0; n < samples; ++n) peakOut = std::max(peakOut, std::abs(output[c][n]));
+        unsigned long long nonFiniteInput = 0, nonFiniteOutput = 0;
+        for (int c = 0; c < ins; ++c) {
+            for (int n = 0; n < samples; ++n) {
+                const auto value = input[c][n];
+                if (!std::isfinite(value)) { ++nonFiniteInput; continue; }
+                peakIn = std::max(peakIn, std::abs(value));
+            }
+        }
+        for (int c = 0; c < outs; ++c) {
+            for (int n = 0; n < samples; ++n) {
+                auto& value = output[c][n];
+                if (!std::isfinite(value)) { value = 0.0f; ++nonFiniteOutput; continue; }
+                peakOut = std::max(peakOut, std::abs(value));
+            }
+        }
+        nonFiniteInputSamples.fetch_add(nonFiniteInput, std::memory_order_relaxed);
+        nonFiniteOutputSamples.fetch_add(nonFiniteOutput, std::memory_order_relaxed);
         inputPeak.store(peakIn, std::memory_order_relaxed); outputPeak.store(peakOut, std::memory_order_relaxed);
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begun).count();
         const auto budget = samples / sampleRate.load();
@@ -225,13 +245,26 @@ public:
         emit(juce::var(o));
     }
 
+    void emitTestMarker(const juce::DynamicObject& command) {
+        const auto name = getPropertyOr(command, "name", "").toString();
+        if (name.isEmpty()) { error("test_marker requires a name"); return; }
+        auto* o = new juce::DynamicObject();
+        o->setProperty("type", "test_marker");
+        o->setProperty("name", name);
+        o->setProperty("telemetrySequence", static_cast<double>(telemetrySequence.load(std::memory_order_relaxed)));
+        emit(juce::var(o));
+    }
+
     void emitTelemetry() {
         const std::lock_guard<std::mutex> controlGuard(controlMutex);
         auto* o = new juce::DynamicObject();
         o->setProperty("type", "telemetry");
+        o->setProperty("telemetrySequence", static_cast<double>(telemetrySequence.fetch_add(1, std::memory_order_relaxed)));
         o->setProperty("running", running.load());
         o->setProperty("sampleRate", sampleRate.load()); o->setProperty("bufferSize", bufferSize.load());
         o->setProperty("callbackCpu", cpu.load()); o->setProperty("xruns", static_cast<double>(xruns.load()));
+        o->setProperty("nonFiniteInputSamples", static_cast<double>(nonFiniteInputSamples.load()));
+        o->setProperty("nonFiniteOutputSamples", static_cast<double>(nonFiniteOutputSamples.load()));
         o->setProperty("inputPeak", inputPeak.load()); o->setProperty("outputPeak", outputPeak.load());
         o->setProperty("protectionEnabled", protectionEnabled.load());
         o->setProperty("preset", protectionPreset.load() == werfeed::ProtectionPreset::music ? "music" : "speech");
@@ -262,6 +295,7 @@ public:
         o->setProperty("notches", juce::var(notches));
         o->setProperty("activeNotches", activeNotches);
         o->setProperty("maximumCutDb", maximumCut);
+        o->setProperty("maximumAllowedNotches", static_cast<int>(werfeed::maxNotches));
         emit(juce::var(o));
     }
 
@@ -396,7 +430,8 @@ private:
     std::atomic_bool configured { false }, running { false };
     std::atomic<double> sampleRate { 0.0 }, cpu { 0.0 };
     std::atomic<int> bufferSize { 0 };
-    std::atomic<unsigned long long> xruns { 0 };
+    std::atomic<unsigned long long> xruns { 0 }, nonFiniteInputSamples { 0 }, nonFiniteOutputSamples { 0 };
+    std::atomic<unsigned long long> telemetrySequence { 0 };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
     std::atomic_bool protectionEnabled { false }, calibrating { false }, calibrationComplete { false };
     std::atomic_bool calibrationBusy { false }, deviceActive { false }, deviceStopPending { false };
@@ -418,6 +453,8 @@ private:
 
 int main() {
     juce::ScopedJuceInitialiser_GUI juceRuntime;
+    StderrLogger logger;
+    juce::Logger::setCurrentLogger(&logger);
     Engine engine;
     {
         auto* hello = new juce::DynamicObject();
@@ -440,7 +477,10 @@ int main() {
         else if (name == "stop") engine.stop();
         else if (name == "set_protection") engine.setProtection(*object);
         else if (name == "start_calibration") engine.startCalibration(*object);
+        else if (name == "test_marker") engine.emitTestMarker(*object);
         else error("unknown command");
     }
     engine.stop(); done.store(true); reporter.join();
+    juce::Logger::setCurrentLogger(nullptr);
+    return 0;
 }
