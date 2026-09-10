@@ -573,15 +573,13 @@ private:
             type.createDevice(input ? name : juce::String(), input ? juce::String() : name));
         const auto channelNames = device ? (input ? device->getInputChannelNames()
                                                    : device->getOutputChannelNames()) : juce::StringArray {};
-        // JUCE exposes the endpoint's channel metadata through the channel
-        // name arrays. AudioIODevice does not provide getTotalNum*Channels().
-        // Keep the records aligned with that API so the Windows build works
-        // across JUCE backends without inventing a second channel count.
-        const auto channelCount = channelNames.size();
-        // An eligible transport is not selectable unless JUCE can open the
-        // endpoint and report at least one channel. Do not send unusable
-        // records to the renderer where they would otherwise disappear only
-        // after the device selector has been built.
+        const auto activeChannels = device
+            ? (input ? device->getActiveInputChannels() : device->getActiveOutputChannels())
+            : juce::BigInteger {};
+        // JUCE exposes channel names and the active-channel mask separately.
+        // Some Windows drivers provide the mask but leave the name array
+        // empty, so use both sources instead of dropping a usable endpoint.
+        const auto channelCount = std::max(channelNames.size(), activeChannels.getHighestBit() + 1);
         if (!device || channelCount <= 0) return;
         d->setProperty("deviceType", type.getTypeName());
         d->setProperty("name", name);
@@ -592,7 +590,13 @@ private:
         d->setProperty("channels", channelCount);
         juce::Array<juce::var> channelLabels;
         for (int channel = 0; channel < channelCount; ++channel) {
-            channelLabels.add(channel < channelNames.size() ? channelNames[channel] : juce::String());
+            const auto reportedName = channel < channelNames.size() ? channelNames[channel].trim() : juce::String();
+            // These labels match JUCE's WASAPI channel naming convention and
+            // identify the exact native channel index when a driver omits
+            // human-readable metadata.
+            channelLabels.add(reportedName.isNotEmpty()
+                ? reportedName
+                : (input ? "Input channel " : "Output channel ") + juce::String(channel + 1));
         }
         d->setProperty("channelNames", juce::var(channelLabels));
         devices.add(juce::var(d));
