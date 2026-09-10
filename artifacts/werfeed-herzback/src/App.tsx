@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, SlidersHorizontal, Sparkles, Timer, Volume2, Waves, X, Zap } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
@@ -131,11 +131,6 @@ function AudioMappingPanel({
   sharedDescription,
   buffer,
   onBufferChange,
-  engineState,
-  sampleRate,
-  actualBuffer,
-  inputPeak,
-  outputPeak,
 }: {
   activeRoute: number;
   route: Route;
@@ -148,11 +143,6 @@ function AudioMappingPanel({
   sharedDescription: string;
   buffer: string;
   onBufferChange: (value: string) => void;
-  engineState: string;
-  sampleRate: string;
-  actualBuffer: string;
-  inputPeak: string;
-  outputPeak: string;
 }) {
   return <div className="panel audio-mapping-panel">
     <div className="section-kicker"><LockKeyhole size={14} /> audio backend &amp; engine</div>
@@ -168,9 +158,8 @@ function AudioMappingPanel({
     </div>
     <div className="detail-row"><span>Shared interface basis</span><strong>{sharedDescription}</strong></div>
     <div className="detail-row"><span>Requested buffer</span><select value={buffer} disabled={!nativeReady || audioRunning} onChange={(event) => onBufferChange(event.target.value)}><option value="32">32 samples</option><option value="64">64 samples</option><option value="128">128 samples</option></select></div>
-    <div className="detail-row"><span>Engine state</span><strong>{engineState}</strong></div>
-    <div className="health-grid"><div className="health"><label>Sample rate</label><strong>{sampleRate}</strong></div><div className="health"><label>Buffer</label><strong>{actualBuffer}</strong></div><div className="health"><label>Input peak</label><strong>{inputPeak}</strong></div><div className="health"><label>Output peak</label><strong>{outputPeak}</strong></div></div>
-    <p className="section-note">The native engine receives the exact device names and channel indices selected here, then keeps all route indices stable while audio is running.</p>
+    <div className="detail-row"><span>Engine state</span><strong>{audioRunning ? 'running · bypassed until armed' : nativeReady ? 'connected · waiting for mappings' : 'unavailable'}</strong></div>
+    <p className="section-note">The native engine receives the exact device names and channel indices selected here. The application starts automatically after every armed route has a complete mapping.</p>
   </div>;
 }
 
@@ -181,10 +170,10 @@ function Home() {
   const [audioState, setAudioState] = useState<AudioState>({});
   const [telemetry, setTelemetry] = useState<Telemetry>({});
   const [routes, setRoutes] = useState<Route[]>([
-    { id: 1, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: 0, outputChannel: 0 },
-    { id: 2, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: 1, outputChannel: 1 },
-    { id: 3, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: 2, outputChannel: 2 },
-    { id: 4, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: 3, outputChannel: 3 },
+    { id: 1, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
+    { id: 2, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
+    { id: 3, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
+    { id: 4, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
   ]);
   const [buffer, setBuffer] = useState('128');
   const [message, setMessage] = useState('');
@@ -193,6 +182,7 @@ function Home() {
   const [activeRoute, setActiveRoute] = useState(0);
   const [calibrations, setCalibrations] = useState<Record<number, CalibrationRecord>>({});
   const [showCalibration, setShowCalibration] = useState(false);
+  const bypassInitialized = useRef(false);
 
   const pairs = useMemo<DevicePair[]>(() => {
     const inputs = devices.filter((device) => device.direction === 'input');
@@ -249,6 +239,21 @@ function Home() {
     output: outputOptions.find((option) => option.key === route.outputKey),
   });
   const enabledRouteSelections = routes.filter((route) => route.enabled).map(routeSelection);
+  const mappingCompatibilityKey = useMemo(() => {
+    for (const route of routes) {
+      const selection = routeSelection(route);
+      const compatibilityKey = selection.input?.compatibilityKey ?? selection.output?.compatibilityKey;
+      if (compatibilityKey) return compatibilityKey;
+    }
+    return undefined;
+  }, [routes, inputOptions, outputOptions]);
+  const scopedOptions = (options: AudioChannelOption[], route: Route) => {
+    const selection = routeSelection(route);
+    const compatibilityKey = selection.input?.compatibilityKey
+      ?? selection.output?.compatibilityKey
+      ?? mappingCompatibilityKey;
+    return compatibilityKey ? options.filter((option) => option.compatibilityKey === compatibilityKey) : options;
+  };
   const sharedCompatibilityKey = enabledRouteSelections.length > 0 &&
     enabledRouteSelections.every((selection) => selection.input && selection.output
       && selection.input.compatibilityKey === selection.output.compatibilityKey
@@ -266,6 +271,7 @@ function Home() {
   const clockScore = audioRunning && typeof telemetry.clockStability === 'number' ? Math.max(0, Math.min(1, telemetry.clockStability)) : undefined;
   const clockLabel = clockScore === undefined ? '—' : clockScore >= 0.98 ? 'Stable' : clockScore >= 0.9 ? 'Watch' : 'Unstable';
   const clockTone = clockScore === undefined ? undefined : clockScore >= 0.98 ? 'stable' : clockScore >= 0.9 ? 'watch' : 'unstable';
+  const protectionActive = telemetry.protectionEnabled === true;
   const showToast = (text: string) => { setMessage(text); window.setTimeout(() => setMessage(''), 2800); };
 
   useEffect(() => {
@@ -322,23 +328,17 @@ function Home() {
   }, [bridge, devices, pairs]);
 
   useEffect(() => {
-    if (!inputOptions.length || !outputOptions.length) return;
     setRoutes((items) => items.map((route) => {
-      const input = inputOptions.find((option) => option.key === route.inputKey)
-        ?? inputOptions[(route.id - 1) % inputOptions.length];
-      const currentOutput = outputOptions.find((option) => option.key === route.outputKey);
-      const output = currentOutput?.compatibilityKey === input.compatibilityKey
-        ? currentOutput
-        : outputOptions.find((option) => option.compatibilityKey === input.compatibilityKey)
-          ?? currentOutput
-          ?? outputOptions[(route.id - 1) % outputOptions.length];
+      const input = inputOptions.find((option) => option.key === route.inputKey);
+      const output = outputOptions.find((option) => option.key === route.outputKey);
+      if ((input && output) || (!input && !output && !route.inputKey && !route.outputKey)) return route;
       return {
         ...route,
-        pairKey: input.compatibilityKey,
-        inputKey: input.key,
-        outputKey: output.key,
-        inputChannel: input.channel,
-        outputChannel: output.channel,
+        pairKey: input?.compatibilityKey ?? output?.compatibilityKey ?? '',
+        inputKey: input?.key ?? '',
+        outputKey: output?.key ?? '',
+        inputChannel: input?.channel ?? -1,
+        outputChannel: output?.channel ?? -1,
       };
     }));
   }, [inputOptions, outputOptions]);
@@ -346,28 +346,24 @@ function Home() {
     setRoutes((items) => items.map((route) => {
       if (route.id !== routeId) return route;
       const current = routeSelection(route);
-      const input = direction === 'input' ? option : current.input;
-      const output = direction === 'output' ? option : current.output;
-      const alignedInput = input && output && input.compatibilityKey === output.compatibilityKey
-        ? input
-        : direction === 'output'
-          ? inputOptions.find((candidate) => candidate.compatibilityKey === option.compatibilityKey) ?? input
-          : input;
-      const alignedOutput = alignedInput && output && alignedInput.compatibilityKey === output.compatibilityKey
-        ? output
-        : outputOptions.find((candidate) => candidate.compatibilityKey === (alignedInput?.compatibilityKey ?? option.compatibilityKey)) ?? output;
+      const nextInput = direction === 'input' ? option : current.input;
+      const nextOutput = direction === 'output' ? option : current.output;
+      const compatible = !nextInput || !nextOutput || nextInput.compatibilityKey === nextOutput.compatibilityKey;
+      const input = compatible ? nextInput : undefined;
+      const output = compatible ? nextOutput : undefined;
       return {
         ...route,
-        pairKey: alignedInput?.compatibilityKey ?? option.compatibilityKey,
-        inputKey: alignedInput?.key ?? route.inputKey,
-        outputKey: alignedOutput?.key ?? route.outputKey,
-        inputChannel: alignedInput?.channel ?? route.inputChannel,
-        outputChannel: alignedOutput?.channel ?? route.outputChannel,
+        pairKey: input?.compatibilityKey ?? output?.compatibilityKey ?? '',
+        inputKey: input?.key ?? '',
+        outputKey: output?.key ?? '',
+        inputChannel: input?.channel ?? -1,
+        outputChannel: output?.channel ?? -1,
       };
     }));
   };
   const updateActiveRouteChannel = (direction: 'input' | 'output', key: string) => {
-    const option = (direction === 'input' ? inputOptions : outputOptions).find((candidate) => candidate.key === key);
+    const options = scopedOptions(direction === 'input' ? inputOptions : outputOptions, activeRouteState);
+    const option = options.find((candidate) => candidate.key === key);
     if (option) updateRouteChannel(activeRoute + 1, direction, option);
   };
 
@@ -415,7 +411,25 @@ function Home() {
       })),
     }).catch((error: unknown) => { setPendingStart(false); showToast(error instanceof Error ? error.message : 'Unable to configure native audio'); });
   };
-  const stop = () => { if (bridge && nativeReady) void bridge.command('stop').catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to stop native audio')); };
+  const autoStartReady = enabledRouteSelections.length > 0
+    && enabledRouteSelections.every((selection) => selection.input && selection.output
+      && selection.input.compatibilityKey === selection.output.compatibilityKey)
+    && (() => {
+      const first = enabledRouteSelections[0];
+      return !!first.input && !!first.output && enabledRouteSelections.every((selection) =>
+        selection.input?.deviceType === first.input?.deviceType
+        && selection.input?.deviceName === first.input?.deviceName
+        && selection.output?.deviceName === first.output?.deviceName);
+    })();
+  useEffect(() => {
+    if (!nativeReady || audioRunning || pendingStart || !autoStartReady) return;
+    configureAndStart();
+  }, [nativeReady, audioRunning, pendingStart, autoStartReady]);
+  useEffect(() => {
+    if (!nativeReady || bypassInitialized.current) return;
+    bypassInitialized.current = true;
+    void bridge?.command('set_protection', { enabled: false, preset }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to set initial bypass'));
+  }, [bridge, nativeReady, preset]);
   const setProtection = (enabled: boolean, nextPreset = preset) => {
     if (!bridge || !nativeReady) return;
     setPreset(nextPreset);
@@ -434,19 +448,43 @@ function Home() {
   };
   const value = (number: number | undefined, digits = 1) => number === undefined ? '—' : number.toFixed(digits);
   const peakPercent = (peak: number | undefined) => peak === undefined ? undefined : peak * 100;
+  const activeInputOptions = scopedOptions(inputOptions, activeRouteState);
+  const activeOutputOptions = scopedOptions(outputOptions, activeRouteState);
 
   return <div className="app-shell">
     {message && <div className="toast" role="status"><AlertTriangle size={14} /> {message}</div>}
-    <header className="app-header"><div className="brand-lockup"><div className="brand-mark"><AudioLines size={20} /></div><div><div className="eyebrow">Werfeed / adaptive feedback control</div><h1 className="brand-title">Werfeed Herzback <span>· acoustic protection</span></h1></div></div><div className="header-meta"><Badge tone={nativeReady ? 'green' : 'red'}><span className="route-dot" /> {bridge ? `Engine ${engineStatus.state}` : 'Native engine unavailable'}</Badge><span className="session">{engineStatus.reason ?? 'Native engine status'}</span></div></header>
-     <main className="main-content">
-      <section className="hero-panel"><div className="hero-grid"><div><div className="status-row"><Badge tone={audioRunning ? 'green' : 'red'}>{audioRunning ? <><Radio size={12} /> routing running</> : <><Power size={12} /> routing stopped</>}</Badge><span className="route-label">{telemetry.calibrating ? 'Calibration sweep in progress' : telemetry.protectionEnabled ? `${telemetry.preset ?? preset} protection active` : 'Protection bypassed'}</span></div><div className="hero-copy"><div><h2 className="hero-title">Measured acoustic protection</h2><p className="hero-description">Calibrate the loudspeaker loop, then use bounded adaptive notch filters to control persistent feedback while preserving speech or music.</p></div><div className="hero-actions"><button type="button" className={`action-button ${audioRunning ? 'off' : ''}`} disabled={!nativeReady || (!audioRunning && (!inputOptions.length || !outputOptions.length))} onClick={audioRunning ? stop : configureAndStart}>{audioRunning ? <><Power size={15} /> Stop</> : <><Zap size={15} /> Configure &amp; Start</>}</button></div></div>
-         <div className="metrics">{[{ label: 'Callback CPU', value: value(telemetry.callbackCpu === undefined ? undefined : telemetry.callbackCpu * 100), unit: '%', icon: <Activity size={14} />, level: telemetry.callbackCpu === undefined ? undefined : telemetry.callbackCpu * 100 }, { label: 'Round-trip buffer', value: value(latency, 2), unit: 'ms est.', icon: <Gauge size={14} />, level: undefined }, { label: 'XRuns', value: telemetry.xruns === undefined ? '—' : String(telemetry.xruns), unit: 'local est.', icon: <Volume2 size={14} />, level: undefined }, { label: 'Clock stability', value: clockLabel, unit: clockScore === undefined ? '' : `${value(telemetry.clockJitterMs, 2)} ms jitter`, icon: <Timer size={14} />, level: clockScore === undefined ? undefined : clockScore * 100, tone: clockTone }].map((metric) => <div className="metric" key={metric.label}><div className="metric-head"><span>{metric.label}</span>{metric.icon}</div><div className={`metric-value ${metric.tone ?? ''}`}>{metric.value} <small>{metric.unit}</small></div><Meter level={metric.level} /></div>)}</div></div>
-         <aside className="guard-card"><div className="guard-card-header"><span className="flex-row"><Sparkles size={14} /> route {activeRoute + 1} protection</span><Badge tone={telemetry.protectionEnabled ? 'green' : 'amber'}>{telemetry.protectionEnabled ? 'armed' : 'bypassed'}</Badge></div><div className="guard-orbit"><div><strong>{activeRouteTelemetry?.activeNotches ?? telemetry.activeNotches ?? 0}</strong><span>active cuts</span></div></div><div className="guard-summary"><strong>{activeRouteTelemetry?.calibrated || activeCalibration ? 'CALIBRATED BASELINE' : 'UNCALIBRATED BASELINE'}</strong><p>Maximum live cut {value(activeRouteTelemetry?.maximumCutDb ?? telemetry.maximumCutDb)} dB.<br />All four route processors remain live simultaneously.</p></div></aside></div></section>
-        <section className="content-grid"><div className="panel"><div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> mono routing</div><h3 className="section-title">Four simultaneous routes</h3><p className="section-note">Select a route to inspect its analyzer, calibration, and suppression fader. Input and output mapping is managed in the audio engine panel. Armed routes must share one interface/backend for a stable device clock.</p></div><div className="mode-switch"><button type="button" className={preset === 'speech' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(telemetry.protectionEnabled === true, 'speech')}><Mic2 size={13} /> Speech</button><button type="button" className={preset === 'music' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(telemetry.protectionEnabled === true, 'music')}><Waves size={13} /> Music</button></div></div><div className="route-grid">{routes.map((route) => { const routeInfo = telemetry.routeTelemetry?.find((item) => item.route === route.id); const calibrated = routeInfo?.calibrated || Boolean(calibrations[route.id]); const selection = routeSelection(route); return <div className={`route-card ${route.id === activeRoute + 1 ? 'selected' : ''} ${route.enabled ? '' : 'muted'}`} key={route.id}><button type="button" className="route-card-top" disabled={!nativeReady} onClick={() => setActiveRoute(route.id - 1)} aria-pressed={route.id === activeRoute + 1}><span className={`route-dot ${route.enabled ? 'locked' : ''}`} /><span className="channel">ROUTE {route.id}</span><span className="route-select-label">{route.id === activeRoute + 1 ? 'viewing' : 'select'}</span></button><div className="route-name">Route {route.id} mono bus pair</div><RouteMappingSummary input={selection.input} output={selection.output} /><div className="route-meta"><span>{route.enabled ? 'live mono path' : 'standby'}</span><label className="route-arm"><input type="checkbox" checked={route.enabled} disabled={audioRunning || !nativeReady} onChange={() => setRoutes((items) => items.map((item) => item.id === route.id ? { ...item, enabled: !item.enabled } : item))} /><span>arm</span></label></div><div className="route-card-bottom"><span>{route.enabled ? 'processing' : 'disabled'}</span><span>{calibrated ? 'baseline saved' : 'needs calibration'}</span></div></div>; })}</div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><SlidersHorizontal size={14} /> Route {activeRoute + 1} suppression amount</div><p className="section-note">Higher values reach deeper, faster narrow-band cuts. Speech stays narrow to protect fundamentals.</p></div><div className="fader-control"><div className="fader-scale"><span>light</span><span>deep</span></div><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round((activeRouteState?.suppression ?? 0.75) * 100)} disabled={!nativeReady} onChange={(event) => setSuppression(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} suppression amount`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 100%)` }} /><strong>{Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%</strong></div></div><div className="curve-section"><div className="curve-toolbar"><div className="curve-name"><Radio size={15} /> Route {activeRoute + 1} live analyzer / adaptive cuts</div><span className="slot-count">{activeNotches?.length ?? 0} / 6 cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} /></div></div>
-       <div className="side-stack"><div className="panel"><div className="panel-heading"><div><h3 className="section-title">Route {activeRoute + 1} live EQ moves</h3><p className="section-note">Calibration-weighted tonal detections with faster persistence and narrow Q.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / 6</span></div>{activeNotches?.length ? activeNotches.map((notch) => <div className="cut-item" key={`${notch.frequency}-${notch.q}`}><div className="cut-main"><span className="cut-frequency"><i className="cut-dot" />{notch.frequency.toFixed(0)} Hz</span><span className="cut-depth">{notch.depthDb.toFixed(1)} dB</span></div><div className="cut-meta"><span>Q {notch.q.toFixed(1)}</span><strong>tracking</strong></div></div>) : <div className="section-note">No active feedback cuts on Route {activeRoute + 1}.</div>}<div className="armed-line"><Sparkles size={13} /> Auto-protect {telemetry.protectionEnabled ? 'armed on all routes' : 'bypassed'}</div></div>
-         <AudioMappingPanel activeRoute={activeRoute} route={activeRouteState} inputOptions={inputOptions} outputOptions={outputOptions} nativeReady={nativeReady} audioRunning={audioRunning} onInputChange={(key) => updateActiveRouteChannel('input', key)} onOutputChange={(key) => updateActiveRouteChannel('output', key)} sharedDescription={sharedCompatibilityKey && sharedInputOption ? `${backendLabel(sharedInputOption.deviceType)} · ${sharedInputOption.interfaceName}` : inputOptions.length && outputOptions.length ? 'Align all armed routes to one shared interface/backend' : 'Native engine has not reported mono channel records'} buffer={buffer} onBufferChange={setBuffer} engineState={audioState.phase ?? engineStatus.state} sampleRate={rate === undefined ? '—' : `${rate} Hz`} actualBuffer={actualBuffer === undefined ? '—' : `${actualBuffer} smp`} inputPeak={peakPercent(telemetry.inputPeak) === undefined ? '—' : `${value(peakPercent(telemetry.inputPeak))}%`} outputPeak={peakPercent(telemetry.outputPeak) === undefined ? '—' : `${value(peakPercent(telemetry.outputPeak))}%`} /></div></section>
-       <footer className="footer-bar"><div className="footer-note"><AlertTriangle size={14} /> {bridge ? 'Calibration is audible. Keep gain low and a physical mute within reach.' : 'Native engine unavailable: this web preview has no Electron preload bridge.'}</div><div className="footer-actions"><select className="calibration-route" value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))} aria-label="Calibration route">{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}</option>)}</select><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button><button type="button" className="plain-button" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteState?.enabled} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="plain-button footer-bypass" disabled={!nativeReady} onClick={() => setProtection(!telemetry.protectionEnabled)}><Power size={13} /> {telemetry.protectionEnabled ? 'Bypass suppression' : 'Arm suppression'}</button></div></footer>
-     </main><CalibrationDialog route={activeRoute + 1} record={showCalibration ? activeCalibration : undefined} live={activeSpectrum} onClose={() => setShowCalibration(false)} /></div>;
+    <header className="app-header">
+      <div className="brand-lockup"><div className="brand-mark"><AudioLines size={20} /></div><div><div className="eyebrow">Werfeed / adaptive feedback control</div><h1 className="brand-title">Werfeed Herzback <span>· acoustic protection</span></h1></div></div>
+      <div className="header-meta">
+        <Badge tone={nativeReady ? 'green' : 'red'}><span className="route-dot" /> {bridge ? `Engine ${engineStatus.state}` : 'Native engine unavailable'}</Badge>
+        <span className="session">{engineStatus.reason ?? 'Native engine status'}</span>
+        <button type="button" className={`header-bypass ${protectionActive ? '' : 'active'}`} disabled={!nativeReady} onClick={() => setProtection(!protectionActive)}><Power size={13} /> {protectionActive ? 'Bypass suppression' : 'Suppression bypassed'}</button>
+      </div>
+    </header>
+    <main className="main-content section-stack">
+      <AudioMappingPanel activeRoute={activeRoute} route={activeRouteState} inputOptions={activeInputOptions} outputOptions={activeOutputOptions} nativeReady={nativeReady} audioRunning={audioRunning} onInputChange={(key) => updateActiveRouteChannel('input', key)} onOutputChange={(key) => updateActiveRouteChannel('output', key)} sharedDescription={sharedCompatibilityKey && sharedInputOption ? `${backendLabel(sharedInputOption.deviceType)} · ${sharedInputOption.interfaceName}` : mappingCompatibilityKey ? 'Other routes limited to the selected interface' : inputOptions.length && outputOptions.length ? 'Choose an input and output on a route to lock the shared clock' : 'Native engine has not reported eligible mono channel records'} buffer={buffer} onBufferChange={setBuffer} />
+      <section className="panel routing-panel">
+        <div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> mono routing</div><h3 className="section-title">Four simultaneous routes</h3><p className="section-note">Choose a route to edit its mapping above. The first selected interface limits every other route so all armed paths share one hardware clock.</p></div></div>
+        <div className="route-grid">{routes.map((route) => { const routeInfo = telemetry.routeTelemetry?.find((item) => item.route === route.id); const calibrated = routeInfo?.calibrated || Boolean(calibrations[route.id]); const selection = routeSelection(route); return <div className={`route-card ${route.id === activeRoute + 1 ? 'selected' : ''} ${route.enabled ? '' : 'muted'}`} key={route.id}><button type="button" className="route-card-top" disabled={!nativeReady} onClick={() => setActiveRoute(route.id - 1)} aria-pressed={route.id === activeRoute + 1}><span className={`route-dot ${route.enabled ? 'locked' : ''}`} /><span className="channel">ROUTE {route.id}</span><span className="route-select-label">{route.id === activeRoute + 1 ? 'viewing' : 'select'}</span></button><div className="route-name">Route {route.id} mono bus pair</div><RouteMappingSummary input={selection.input} output={selection.output} /><div className="route-meta"><span>{route.enabled ? 'armed path' : 'standby'}</span><label className="route-arm"><input type="checkbox" checked={route.enabled} disabled={audioRunning || !nativeReady} onChange={() => setRoutes((items) => items.map((item) => item.id === route.id ? { ...item, enabled: !item.enabled } : item))} /><span>arm</span></label></div><div className="route-card-bottom"><span>{route.enabled ? 'processing' : 'disabled'}</span><span>{calibrated ? 'baseline saved' : 'needs calibration'}</span></div></div>; })}</div>
+      </section>
+      <section className="panel calibration-panel">
+        <div className="panel-heading"><div><div className="section-kicker"><BarChart3 size={14} /> calibration</div><h3 className="section-title">Measure one route at a time</h3><p className="section-note">Calibration plays the safety announcement, one second of silence, then the impulse and logarithmic sweep on the selected route.</p></div><Badge tone={telemetry.calibrating ? 'amber' : 'quiet'}>{telemetry.calibrating ? 'sweep in progress' : activeCalibration ? 'baseline saved' : 'ready when audio is mapped'}</Badge></div>
+        <div className="calibration-controls"><label className="mapping-field"><span>Calibration route</span><select value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))}>{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}</option>)}</select></label><button type="button" className="plain-button footer-bypass" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteState?.enabled} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button></div>
+      </section>
+      <section className="route-focus-stack">
+        <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector stays baseline-relative and calibration-weighted while the engine runs bypassed or armed.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / 6 cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} /></section>
+        <section className="panel"><div className="panel-heading"><div><div className="section-kicker"><Sparkles size={14} /> route {activeRoute + 1} live EQ moves</div><h3 className="section-title">Narrow-band protection decisions</h3><p className="section-note">Calibration-weighted tonal detections with faster persistence and narrow Q.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / 6</span></div>{activeNotches?.length ? activeNotches.map((notch) => <div className="cut-item" key={`${notch.frequency}-${notch.q}`}><div className="cut-main"><span className="cut-frequency"><i className="cut-dot" />{notch.frequency.toFixed(0)} Hz</span><span className="cut-depth">{notch.depthDb.toFixed(1)} dB</span></div><div className="cut-meta"><span>Q {notch.q.toFixed(1)}</span><strong>tracking</strong></div></div>) : <div className="section-note">No active feedback cuts on Route {activeRoute + 1}.</div>}</section>
+        <section className="panel route-protection-panel"><div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> route {activeRoute + 1} protection</div><h3 className="section-title">{protectionActive ? 'Suppression armed' : 'Suppression bypassed'}</h3><p className="section-note">Bypass changes feedback suppression only. Routing and I/O mappings remain active and unchanged.</p></div><Badge tone={protectionActive ? 'green' : 'amber'}>{protectionActive ? 'armed' : 'bypassed'}</Badge></div><div className="mode-switch"><button type="button" className={preset === 'speech' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'speech')}><Mic2 size={13} /> Speech</button><button type="button" className={preset === 'music' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'music')}><Waves size={13} /> Music</button></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><SlidersHorizontal size={14} /> Suppression amount</div><p className="section-note">Higher values reach deeper, faster narrow-band cuts. Speech stays narrow to protect fundamentals.</p></div><div className="fader-control"><div className="fader-scale"><span>light</span><span>deep</span></div><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round((activeRouteState?.suppression ?? 0.75) * 100)} disabled={!nativeReady} onChange={(event) => setSuppression(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} suppression amount`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 100%)` }} /><strong>{Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%</strong></div></div></section>
+      </section>
+      <section className="panel telemetry-panel">
+        <div className="panel-heading"><div><div className="section-kicker"><Gauge size={14} /> live readings</div><h3 className="section-title">Engine and signal health</h3><p className="section-note">Telemetry stays visible below the control sections so live operation can be monitored without moving the routing controls.</p></div><Badge tone={audioRunning ? 'green' : 'quiet'}>{audioRunning ? 'audio running' : nativeReady ? 'engine connected' : 'waiting for engine'}</Badge></div>
+        <div className="metrics">{[{ label: 'Callback CPU', value: value(telemetry.callbackCpu === undefined ? undefined : telemetry.callbackCpu * 100), unit: '%', icon: <Activity size={14} />, level: telemetry.callbackCpu === undefined ? undefined : telemetry.callbackCpu * 100 }, { label: 'Round-trip buffer', value: value(latency, 2), unit: 'ms est.', icon: <Gauge size={14} />, level: undefined }, { label: 'XRuns', value: telemetry.xruns === undefined ? '—' : String(telemetry.xruns), unit: 'local est.', icon: <Volume2 size={14} />, level: undefined }, { label: 'Clock stability', value: clockLabel, unit: clockScore === undefined ? '' : `${value(telemetry.clockJitterMs, 2)} ms jitter`, icon: <Timer size={14} />, level: clockScore === undefined ? undefined : clockScore * 100, tone: clockTone }].map((metric) => <div className="metric" key={metric.label}><div className="metric-head"><span>{metric.label}</span>{metric.icon}</div><div className={`metric-value ${metric.tone ?? ''}`}>{metric.value} <small>{metric.unit}</small></div><Meter level={metric.level} /></div>)}</div>
+        <div className="health-grid"><div className="health"><label>Sample rate</label><strong>{rate === undefined ? '—' : `${rate} Hz`}</strong></div><div className="health"><label>Buffer</label><strong>{actualBuffer === undefined ? '—' : `${actualBuffer} samples`}</strong></div><div className="health"><label>Input peak</label><strong>{peakPercent(telemetry.inputPeak) === undefined ? '—' : `${value(peakPercent(telemetry.inputPeak))}%`}</strong></div><div className="health"><label>Output peak</label><strong>{peakPercent(telemetry.outputPeak) === undefined ? '—' : `${value(peakPercent(telemetry.outputPeak))}%`}</strong></div></div>
+      </section>
+      <footer className="footer-bar"><div className="footer-note"><AlertTriangle size={14} /> {bridge ? 'Calibration is audible. Keep gain low and a physical mute within reach.' : 'Native engine unavailable: this web preview has no Electron preload bridge.'}</div><span className="session">{telemetry.calibrating ? 'Calibration is audible' : protectionActive ? 'Suppression armed' : 'Suppression bypassed'}</span></footer>
+    </main>
+    <CalibrationDialog route={activeRoute + 1} record={showCalibration ? activeCalibration : undefined} live={activeSpectrum} onClose={() => setShowCalibration(false)} />
+  </div>;
 }
 
 function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><ErrorBoundary><Home /></ErrorBoundary><Toaster /></TooltipProvider></QueryClientProvider>; }
