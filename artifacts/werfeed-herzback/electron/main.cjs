@@ -18,6 +18,47 @@ const MAX_LINE_BYTES = 1024 * 1024;
 let engine;
 let engineStatus = { state: 'unavailable', reason: 'Engine has not been started.' };
 let stoppingEngine = false;
+let stdoutJsonBuffer = '';
+const validationOutputPath = process.env.WERFEED_VALIDATION_OUTPUT;
+const validationEngineOutputPath = process.env.WERFEED_VALIDATION_ENGINE_OUTPUT;
+let validationFailed = false;
+let validationFinished = false;
+
+function writeValidation(record) {
+  if (!validationOutputPath) return;
+  try {
+    fs.mkdirSync(path.dirname(validationOutputPath), { recursive: true });
+    fs.appendFileSync(validationOutputPath, `${JSON.stringify(record)}\n`, 'utf8');
+  } catch (error) {
+    console.error(`[werfeed validation] unable to write evidence: ${error.message}`);
+  }
+}
+
+function writeNativeOutput(line) {
+  if (!validationEngineOutputPath) return;
+  try {
+    fs.mkdirSync(path.dirname(validationEngineOutputPath), { recursive: true });
+    fs.appendFileSync(validationEngineOutputPath, `${line}\n`, 'utf8');
+  } catch (error) {
+    console.error(`[werfeed validation] unable to write native output: ${error.message}`);
+  }
+}
+
+function finishValidation(exitCode, message) {
+  if (!validationOutputPath || validationFinished) return;
+  validationFinished = true;
+  if (message) writeValidation({ type: 'validation_error', message });
+  writeValidation({ type: 'validation_result', pass: exitCode === 0, exitCode });
+  stopEngine();
+  setTimeout(() => app.exit(exitCode), 100);
+}
+
+function failValidation(message) {
+  if (!validationOutputPath || validationFailed) return;
+  validationFailed = true;
+  writeValidation({ type: 'validation_error', message });
+  finishValidation(1);
+}
 
 function engineBinaryName() {
   return process.platform === 'win32' ? 'werfeed-engine.exe' : 'werfeed-engine';
@@ -71,26 +112,49 @@ function emitEngineEvent(event) {
   broadcast('werfeed-engine:event', event);
 }
 
-function protocolError(message) {
-  emitEngineEvent({ type: 'error', code: 'ENGINE_PROTOCOL_ERROR', message });
+function protocolError(message, rawLine) {
+  const detail = rawLine ? ` (${rawLine.slice(0, 240)})` : '';
+  const fullMessage = `${message}${detail}`;
+  emitEngineEvent({ type: 'error', code: 'ENGINE_PROTOCOL_ERROR', message: fullMessage });
+  writeValidation({ type: 'engine_protocol_error', message: fullMessage });
+  failValidation(`ENGINE_PROTOCOL_ERROR: ${fullMessage}`);
 }
 
 function handleEngineLine(line) {
-  if (Buffer.byteLength(line) > MAX_LINE_BYTES) {
+  const normalized = line.replace(/^\uFEFF/, '').trim();
+  if (!normalized) return;
+  const candidate = stdoutJsonBuffer + normalized;
+  if (!normalized.startsWith('{') && !stdoutJsonBuffer) {
+    // JUCE/device drivers may print diagnostics despite the protocol contract.
+    // Keep them out of the UI event stream, but preserve them in the desktop log.
+    console.error(`[werfeed engine diagnostic] ${normalized}`);
+    return;
+  }
+  if (Buffer.byteLength(candidate) > MAX_LINE_BYTES) {
     protocolError('Engine sent a message larger than 1 MiB.');
+    stdoutJsonBuffer = '';
     return;
   }
 
   let event;
   try {
-    event = JSON.parse(line);
+    event = JSON.parse(candidate);
   } catch {
-    protocolError('Engine sent invalid JSON.');
+    // Older native builds used JUCE pretty-printing. Keep accepting that
+    // framing so a stale packaged engine cannot strand the device selector.
+    if (candidate.startsWith('{') && !candidate.endsWith('}')) {
+      stdoutJsonBuffer = candidate;
+      return;
+    }
+    console.error('[werfeed engine] invalid JSON:', JSON.stringify(candidate.slice(0, 500)));
+    protocolError('Engine sent invalid JSON.', candidate);
+    stdoutJsonBuffer = '';
     return;
   }
+  stdoutJsonBuffer = '';
   if (!event || typeof event !== 'object' || Array.isArray(event) ||
       !ENGINE_EVENTS.has(event.type)) {
-    protocolError('Engine sent an unsupported event.');
+    protocolError('Engine sent an unsupported event.', JSON.stringify(event));
     return;
   }
   emitEngineEvent(event);
@@ -99,20 +163,21 @@ function handleEngineLine(line) {
 function startEngine() {
   const binary = findEngineBinary();
   if (!binary) {
-    setEngineStatus(
-      'unavailable',
-      `No native engine binary found for ${process.platform}-${process.arch}.`,
-    );
+    const reason = `No native engine binary found for ${process.platform}-${process.arch}.`;
+    setEngineStatus('unavailable', reason);
+    failValidation(reason);
     return;
   }
 
   stoppingEngine = false;
+  stdoutJsonBuffer = '';
   setEngineStatus('starting');
   try {
     engine = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   } catch (error) {
     engine = undefined;
     setEngineStatus('unavailable', `Unable to launch native engine: ${error.message}`);
+    failValidation(`Unable to launch native engine: ${error.message}`);
     return;
   }
 
@@ -124,7 +189,10 @@ function startEngine() {
     while ((newline = stdoutBuffer.indexOf('\n')) !== -1) {
       const line = stdoutBuffer.slice(0, newline).replace(/\r$/, '');
       stdoutBuffer = stdoutBuffer.slice(newline + 1);
-      if (line) handleEngineLine(line);
+      if (line) {
+        writeNativeOutput(line);
+        handleEngineLine(line);
+      }
     }
     if (Buffer.byteLength(stdoutBuffer) > MAX_LINE_BYTES) {
       stdoutBuffer = '';
@@ -137,13 +205,19 @@ function startEngine() {
   engine.once('error', (error) => {
     engine = undefined;
     setEngineStatus('unavailable', `Unable to launch native engine: ${error.message}`);
+    failValidation(`Unable to launch native engine: ${error.message}`);
   });
   engine.once('exit', (code, signal) => {
     engine = undefined;
+    if (stdoutJsonBuffer) {
+      protocolError('Native engine exited with an incomplete JSON frame.', stdoutJsonBuffer);
+      stdoutJsonBuffer = '';
+    }
     if (stoppingEngine) {
       setEngineStatus('stopped');
     } else {
       setEngineStatus('crashed', `Native engine exited (${signal || `code ${code}`}).`);
+      failValidation(`Native engine exited (${signal || `code ${code}`}).`);
     }
   });
 }
@@ -159,6 +233,25 @@ function validCommand(command, payload) {
 }
 
 ipcMain.handle('werfeed-engine:status', () => engineStatus);
+ipcMain.on('werfeed-validation:devices', (_event, payload) => {
+  if (!validationOutputPath || validationFailed || validationFinished) return;
+  const devices = Array.isArray(payload?.devices) ? payload.devices : [];
+  const pairs = Array.isArray(payload?.pairs) ? payload.pairs : [];
+  writeValidation({ type: 'renderer_devices', devices, pairs, pairCount: pairs.length });
+  if (!devices.length || !pairs.length) {
+    writeValidation({
+      type: 'hardware_probe',
+      available: false,
+      message: !devices.length
+        ? 'No Windows audio devices were present on the validation runner.'
+        : 'Windows audio devices were present, but no compatible input/output pair was available.',
+    });
+    finishValidation(0);
+    return;
+  }
+  writeValidation({ type: 'hardware_probe', available: true });
+  finishValidation(0);
+});
 ipcMain.handle('werfeed-engine:command', (_event, command, payload) => {
   if (!validCommand(command, payload)) {
     throw new Error('Invalid native engine command or payload.');
@@ -209,6 +302,7 @@ function createWindow() {
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     const message = `Unable to load Werfeed Herzback (${errorCode}: ${errorDescription}).`;
     console.error(message);
+    failValidation(message);
     void window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
       <!doctype html>
       <html>
@@ -222,6 +316,10 @@ function createWindow() {
     `)}`);
   });
 
+  window.webContents.once('did-finish-load', () => {
+    if (!engine && engineStatus.state !== 'starting') startEngine();
+  });
+
   if (isDevelopment) {
     const developmentUrl =
       process.env.WERFEED_DEV_URL || 'http://localhost:21230/';
@@ -232,8 +330,17 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  startEngine();
+  writeValidation({
+    type: 'package',
+    packageVersion: app.getVersion(),
+    electronVersion: process.versions.electron,
+    platform: process.platform,
+    architecture: process.arch,
+  });
   createWindow();
+  if (validationOutputPath) {
+    setTimeout(() => failValidation('Timed out waiting for the renderer device selector.'), 30000).unref();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
