@@ -214,6 +214,10 @@ public:
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override {
         sampleRate.store(device->getCurrentSampleRate());
         bufferSize.store(device->getCurrentBufferSizeSamples());
+        callbackTimingInitialised = false;
+        clockJitterRatio.store(0.0, std::memory_order_relaxed);
+        clockJitterMs.store(0.0, std::memory_order_relaxed);
+        clockStability.store(0.0, std::memory_order_relaxed);
         for (auto& processor : processors) processor.prepare(device->getCurrentSampleRate());
         deviceActive.store(true);
     }
@@ -227,6 +231,24 @@ public:
                                           float* const* output, int outs, int samples,
                                           const juce::AudioIODeviceCallbackContext&) override {
         const auto begun = std::chrono::steady_clock::now();
+        const auto rate = sampleRate.load(std::memory_order_relaxed);
+        const auto expectedPeriod = samples / std::max(1.0, rate);
+        if (callbackTimingInitialised) {
+            const auto interval = std::chrono::duration<double>(
+                begun - lastCallbackAt).count();
+            const auto jitterRatio = std::min(1.0,
+                std::abs(interval - expectedPeriod) / std::max(1.0e-6, expectedPeriod));
+            const auto smoothedRatio = clockJitterRatio.load(std::memory_order_relaxed) * 0.95
+                + jitterRatio * 0.05;
+            clockJitterRatio.store(smoothedRatio, std::memory_order_relaxed);
+            clockJitterMs.store(smoothedRatio * expectedPeriod * 1000.0,
+                std::memory_order_relaxed);
+            clockStability.store(1.0 - smoothedRatio, std::memory_order_relaxed);
+        } else {
+            callbackTimingInitialised = true;
+            clockStability.store(1.0, std::memory_order_relaxed);
+        }
+        lastCallbackAt = begun;
         for (int channel = 0; channel < outs; ++channel) std::fill_n(output[channel], samples, 0.0f);
         const auto calibrationActive = calibrating.load(std::memory_order_acquire);
         auto calibrationIndex = calibrationPosition.load(std::memory_order_relaxed);
@@ -305,7 +327,9 @@ public:
         o->setProperty("telemetrySequence", static_cast<double>(telemetrySequence.fetch_add(1, std::memory_order_relaxed)));
         o->setProperty("running", running.load());
         o->setProperty("sampleRate", sampleRate.load()); o->setProperty("bufferSize", bufferSize.load());
-        o->setProperty("callbackCpu", cpu.load()); o->setProperty("xruns", static_cast<double>(xruns.load()));
+         o->setProperty("callbackCpu", cpu.load()); o->setProperty("xruns", static_cast<double>(xruns.load()));
+         o->setProperty("clockStability", clockStability.load());
+         o->setProperty("clockJitterMs", clockJitterMs.load());
         o->setProperty("nonFiniteInputSamples", static_cast<double>(nonFiniteInputSamples.load()));
         o->setProperty("nonFiniteOutputSamples", static_cast<double>(nonFiniteOutputSamples.load()));
         o->setProperty("inputPeak", inputPeak.load()); o->setProperty("outputPeak", outputPeak.load());
@@ -581,6 +605,7 @@ private:
     int routeCount = 0; // only changed while callback is detached
     std::atomic_bool configured { false }, running { false };
     std::atomic<double> sampleRate { 0.0 }, cpu { 0.0 };
+    std::atomic<double> clockJitterRatio { 0.0 }, clockJitterMs { 0.0 }, clockStability { 0.0 };
     std::atomic<int> bufferSize { 0 };
     std::atomic<unsigned long long> xruns { 0 }, nonFiniteInputSamples { 0 }, nonFiniteOutputSamples { 0 };
     std::atomic<unsigned long long> telemetrySequence { 0 };
@@ -600,6 +625,8 @@ private:
     juce::String calibrationRouteKey;
     std::map<juce::String, Baseline> baselines;
     std::mutex controlMutex;
+    std::chrono::steady_clock::time_point lastCallbackAt {};
+    bool callbackTimingInitialised = false;
 };
 
 } // namespace

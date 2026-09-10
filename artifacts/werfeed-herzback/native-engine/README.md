@@ -105,7 +105,8 @@ output, and limited to eight. The physical input/output device pair and
 backend are shared by the engine so all routes use one stable device clock;
 each route can independently select its input channel and output channel.
 While running, status events are capped at 10 Hz and expose actual device rate,
-buffer size, callback CPU fraction, local deadline overruns, cumulative
+buffer size, callback CPU fraction, callback clock stability and jitter, local
+deadline overruns, cumulative
 non-finite input/output sample counts, and input/output peaks. Each telemetry
 event also has a monotonically increasing sequence number. Device
 configuration and route changes are deliberately rejected while running to keep
