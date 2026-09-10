@@ -571,9 +571,26 @@ private:
                                                    : device->getOutputChannelNames().size()) : 0;
         d->setProperty("deviceType", type.getTypeName());
         d->setProperty("name", name);
+        d->setProperty("interfaceName", interfaceNameFor(name));
         d->setProperty("direction", input ? "input" : "output");
         d->setProperty("channels", channelCount);
         devices.add(juce::var(d));
+    }
+    juce::String interfaceNameFor(const juce::String& rawName) const {
+        const auto name = rawName.trim();
+        const auto open = name.indexOfChar('(');
+        const auto close = name.lastIndexOfChar(')');
+        if (open > 0 && close > open) {
+            const auto endpoint = name.substring(0, open).trim().toLowerCase();
+            if (endpoint.startsWith("microphone") || endpoint.startsWith("speakers")
+                || endpoint.startsWith("speaker") || endpoint.startsWith("line in")
+                || endpoint.startsWith("line out") || endpoint.startsWith("headphones")
+                || endpoint.startsWith("digital audio") || endpoint.startsWith("input")
+                || endpoint.startsWith("output")) {
+                return name.substring(open + 1, close).trim();
+            }
+        }
+        return name;
     }
     bool parseRoutes(const juce::var& value, int inputChannels, int outputChannels) {
         auto* array = value.getArray();

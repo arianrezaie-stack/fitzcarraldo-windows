@@ -137,8 +137,16 @@ inline std::array<float, analyzerBins> detectionBaseline(
     std::sort(sorted.begin(), sorted.end());
     const auto median = sorted[sorted.size() / 2];
     std::array<float, analyzerBins> result {};
-    for (std::size_t i = 0; i < result.size(); ++i)
-        result[i] = -55.0f + std::clamp(responseDb[i] - median, -12.0f, 12.0f);
+    for (std::size_t i = 0; i < result.size(); ++i) {
+        // A positive calibrated response peak identifies a frequency where
+        // the acoustic loop is more likely to become unstable. Move its
+        // effective detector baseline downward so the live detector engages
+        // earlier there; do not make ordinary response valleys harder to
+        // protect than the uncalibrated baseline.
+        const auto peakAboveMedian = std::max(0.0f, responseDb[i] - median - 3.0f);
+        const auto peakBiasDb = std::min(9.0f, peakAboveMedian * 0.75f);
+        result[i] = -55.0f - peakBiasDb;
+    }
     return result;
 }
 
@@ -244,7 +252,7 @@ private:
 
     void analyze(float sample) noexcept {
         analysisBuffer[static_cast<std::size_t>(detectorSamples)] = sample;
-        if (++detectorSamples < fftSize) return;
+        if (++detectorSamples < static_cast<int>(fftSize)) return;
         for (std::size_t i = 0; i < fftSize; ++i) {
             const auto window = 0.5f - 0.5f * std::cos(
                 2.0f * pi * static_cast<float>(i) / static_cast<float>(fftSize - 1));
@@ -274,7 +282,11 @@ private:
             }
         }
         const auto selectedPreset = preset.load(std::memory_order_relaxed);
-        const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech ? 12.0f : 15.0f;
+        // Speech feedback can be audible before it reaches the old 12 dB gate.
+        // Keep the tonal and persistence checks in place, but let the notch
+        // start from a lower calibrated excess level without making Music mode
+        // more eager to notch program material.
+        const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech ? 6.0f : 15.0f;
         notchSeen.fill(false);
         for (std::size_t bin = 0; bin < analyzerBins; ++bin) {
             const auto position = static_cast<float>(bin) / static_cast<float>(analyzerBins - 1);
@@ -292,7 +304,7 @@ private:
         // The overlapping hop makes three speech frames about 16 ms apart while
         // still requiring a stable, rising tonal peak rather than a single
         // voice or music bin.
-        const auto requiredFrames = selectedPreset == ProtectionPreset::speech ? 2 : 18;
+        const auto requiredFrames = selectedPreset == ProtectionPreset::speech ? 2 : 24;
         const auto firstBin = std::max<std::size_t>(2, static_cast<std::size_t>(40.0 * fftSize / sampleRate));
         const auto lastBin = std::min<std::size_t>(fftSize / 2 - 2,
             static_cast<std::size_t>(std::min(20000.0, sampleRate * 0.45) * fftSize / sampleRate));
@@ -329,14 +341,19 @@ private:
             // this wider neighborhood comparison than a narrow room howl.
             const auto tonal = level - neighborhoodLevel;
             const auto tonalThreshold = selectedPreset == ProtectionPreset::music
-                ? 8.0f : (frequency < 350.0f ? 7.0f : 4.0f);
+                ? 7.0f : (frequency < 350.0f ? 5.0f : 3.0f);
             const auto leftMagnitude = 4.0f * std::hypot(fftReal[fftBin - 1], fftImag[fftBin - 1]) /
                                        static_cast<float>(fftSize);
             const auto rightMagnitude = 4.0f * std::hypot(fftReal[fftBin + 1], fftImag[fftBin + 1]) /
                                         static_cast<float>(fftSize);
             const auto localPeak = magnitude >= leftMagnitude && magnitude >= rightMagnitude;
             const auto risingPeak = growthFrames[fftBin] >= 2;
-            const auto stableStrongPeak = excess >= 24.0f;
+            // Once a narrow peak clears the preset's lower baseline gate,
+            // persistence is enough to distinguish sustained feedback from a
+            // transient rise. The former 24 dB floor blocked quieter howls
+            // even after the baseline threshold had been lowered.
+            const auto stableStrongPeak = selectedPreset == ProtectionPreset::speech
+                ? excess >= engageAboveBaseline : excess >= 24.0f;
             if (localPeak && excess >= engageAboveBaseline && tonal >= tonalThreshold &&
                 (risingPeak || stableStrongPeak)) {
                 persistence[fftBin] = static_cast<unsigned char>(
@@ -416,12 +433,20 @@ private:
         const auto centerBin = std::clamp<std::size_t>(
             static_cast<std::size_t>(std::lround(frequency * fftSize / sampleRate)),
             1, fftSize / 2 - 1);
-        const auto leftMagnitude = std::hypot(fftReal[centerBin - 1], fftImag[centerBin - 1]);
-        const auto centerMagnitude = std::hypot(fftReal[centerBin], fftImag[centerBin]);
-        const auto rightMagnitude = std::hypot(fftReal[centerBin + 1], fftImag[centerBin + 1]);
-        const auto curvature = leftMagnitude - 2.0f * centerMagnitude + rightMagnitude;
-        const auto interpolation = std::abs(curvature) > 1.0e-9f
-            ? std::clamp(0.5f * (leftMagnitude - rightMagnitude) / curvature, -0.5f, 0.5f)
+        const auto leftMagnitude = std::max(1.0e-12f,
+            std::hypot(fftReal[centerBin - 1], fftImag[centerBin - 1]));
+        const auto centerMagnitude = std::max(1.0e-12f,
+            std::hypot(fftReal[centerBin], fftImag[centerBin]));
+        const auto rightMagnitude = std::max(1.0e-12f,
+            std::hypot(fftReal[centerBin + 1], fftImag[centerBin + 1]));
+        // Interpolate the Hann-windowed peak in log magnitude. Linear
+        // interpolation biases off-grid tones toward the nearest FFT bin.
+        const auto leftLog = std::log(leftMagnitude);
+        const auto centerLog = std::log(centerMagnitude);
+        const auto rightLog = std::log(rightMagnitude);
+        const auto curvature = leftLog - 2.0f * centerLog + rightLog;
+        const auto interpolation = std::abs(curvature) > 1.0e-6f
+            ? std::clamp(0.5f * (leftLog - rightLog) / curvature, -0.5f, 0.5f)
             : 0.0f;
         selected->sampleRate = sampleRate;
         selected->frequency = std::clamp(static_cast<float>(
@@ -434,7 +459,7 @@ private:
         // next frames move to the route's chosen maximum cut.
         selected->targetDepthDb = std::max(selected->targetDepthDb - 4.5f, maximumDepth);
     }
-    static constexpr std::size_t fftSize = 2048;
+    static constexpr std::size_t fftSize = 4096;
     static constexpr std::size_t analysisHop = 256;
     double sampleRate = 48000;
     int detectorSamples = 0;

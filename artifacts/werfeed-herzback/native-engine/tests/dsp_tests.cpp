@@ -79,6 +79,13 @@ int main() {
         assert(std::abs(shapedMeasured[bin] -
                         static_cast<float>(shapedRoomResponseDb(frequency))) < 1.0f);
     }
+    std::array<float, werfeed::analyzerBins> calibrationPeaks {};
+    calibrationPeaks.fill(0.0f);
+    calibrationPeaks[96] = 12.0f;
+    const auto calibratedBaseline = werfeed::detectionBaseline(calibrationPeaks);
+    assert(calibratedBaseline[96] < calibratedBaseline[95]);
+    assert(calibratedBaseline[96] <= -61.0f);
+    assert(calibratedBaseline[20] == -55.0f);
 
     werfeed::FeedbackProcessor processor;
     processor.prepare(rate);
@@ -122,23 +129,36 @@ int main() {
         assert(offGridSnapshot.maximumCutDb < -6.0f);
         assert(std::any_of(offGridSnapshot.notches.begin(), offGridSnapshot.notches.end(),
             [frequency](const werfeed::NotchSnapshot& notch) {
-                return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.2f;
+                 return notch.active && std::abs(notch.frequency - frequency) /
+                     frequency < 0.02f;
             }));
     }
-    werfeed::FeedbackProcessor lowTone;
-    lowTone.prepare(rate); lowTone.clearBaseline(); lowTone.setEnabled(true);
-    lowTone.setSuppressionAmount(1.0f);
+    // A lower-level feedback tone should engage below the old 12 dB speech
+    // gate while still passing the tonal and persistence checks.
+    werfeed::FeedbackProcessor quietFeedback;
+    quietFeedback.prepare(rate); quietFeedback.clearBaseline(); quietFeedback.setEnabled(true);
     for (int i = 0; i < 144000; ++i)
-        lowTone.process(0.3f * std::sin(2.0f * werfeed::pi * 70.0f * i / 48000.0f));
-    const auto lowSnapshot = lowTone.snapshot();
-    assert(lowSnapshot.activeNotches == 1);
-    assert(lowSnapshot.maximumCutDb <= -11.5f);
-    assert(std::any_of(lowSnapshot.notches.begin(), lowSnapshot.notches.end(),
-        [](const werfeed::NotchSnapshot& notch) {
-            return notch.active && std::abs(notch.frequency - 70.0f) / 70.0f < 0.1f && notch.q < 10.0f;
-        }));
-    for (int i = 0; i < 48000; ++i) lowTone.process(0.0f);
-    assert(lowTone.snapshot().activeNotches == 0);
+        quietFeedback.process(0.006f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
+    assert(quietFeedback.snapshot().activeNotches > 0);
+    // Notch release is generic behavior, not a special case for 70 Hz:
+    // exercise it at two representative low-frequency tones.
+    for (const auto frequency : { 70.0f, 137.0f }) {
+        werfeed::FeedbackProcessor releaseTone;
+        releaseTone.prepare(rate); releaseTone.clearBaseline(); releaseTone.setEnabled(true);
+        releaseTone.setSuppressionAmount(1.0f);
+        for (int i = 0; i < 144000; ++i)
+            releaseTone.process(0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
+        const auto releaseSnapshot = releaseTone.snapshot();
+        assert(releaseSnapshot.activeNotches == 1);
+        assert(releaseSnapshot.maximumCutDb <= -11.5f);
+        assert(std::any_of(releaseSnapshot.notches.begin(), releaseSnapshot.notches.end(),
+            [frequency](const werfeed::NotchSnapshot& notch) {
+                return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.02f
+                    && notch.q < 10.0f;
+            }));
+        for (int i = 0; i < 48000; ++i) releaseTone.process(0.0f);
+        assert(releaseTone.snapshot().activeNotches == 0);
+    }
     werfeed::FeedbackProcessor twoTone;
     twoTone.prepare(rate); twoTone.clearBaseline(); twoTone.setEnabled(true);
     for (int i = 0; i < 144000; ++i) {
