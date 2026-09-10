@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 int main() {
@@ -116,4 +117,8 @@ int main() {
         program.process(input);
     }
     assert(program.snapshot().activeNotches == 0);
+
+    // A malformed input sample must never propagate a non-finite output.
+    assert(std::isfinite(program.process(std::numeric_limits<float>::quiet_NaN())));
+    assert(std::isfinite(program.process(std::numeric_limits<float>::infinity())));
 }
