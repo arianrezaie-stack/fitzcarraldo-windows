@@ -167,6 +167,7 @@ function Home() {
   const bridge = typeof window !== 'undefined' ? window.werfeedDesktop?.engine : undefined;
   const [engineStatus, setEngineStatus] = useState<EngineStatus>(bridge ? { state: 'connecting' } : { state: 'unavailable', reason: 'Electron preload bridge is not present.' });
   const [devices, setDevices] = useState<Device[]>([]);
+  const [devicesReported, setDevicesReported] = useState(false);
   const [audioState, setAudioState] = useState<AudioState>({});
   const [telemetry, setTelemetry] = useState<Telemetry>({});
   const [routes, setRoutes] = useState<Route[]>([
@@ -284,6 +285,7 @@ function Home() {
       if (payload.type === 'devices' && Array.isArray(payload.devices)) {
         const records = payload.devices.filter((item): item is Device => !!item && typeof item === 'object' && typeof (item as Device).deviceType === 'string' && typeof (item as Device).name === 'string' && ((item as Device).direction === 'input' || (item as Device).direction === 'output'));
         setDevices(records);
+        setDevicesReported(true);
       }
       if (payload.type === 'state') {
         const state = payload as AudioState & { type: string };
@@ -320,13 +322,13 @@ function Home() {
   }, [bridge, engineStatus.state]);
 
   useEffect(() => {
-    if (!bridge?.validation || !devices.length) return;
+    if (!bridge?.validation || !devicesReported) return;
     bridge.validation.reportDevices(devices, pairs.map(({ input, output }) => ({
       deviceType: input.deviceType,
       input: input.name,
       output: output.name,
     })));
-  }, [bridge, devices, pairs]);
+  }, [bridge, devices, devicesReported, pairs]);
 
   useEffect(() => {
     setRoutes((items) => items.map((route) => {
