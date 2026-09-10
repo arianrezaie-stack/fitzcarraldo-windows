@@ -49,6 +49,7 @@ juce::var getPropertyOr(const juce::DynamicObject& object, const char* name, juc
 class Engine final : public juce::AudioIODeviceCallback {
 public:
     Engine() {
+        routeSuppression.fill(0.75f);
         calibrationFile = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
             .getChildFile("Werfeed Herzback").getChildFile("calibrations.json");
         loadCalibrations();
@@ -100,6 +101,9 @@ public:
         for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
             auto& processor = processors[static_cast<std::size_t>(routeIndex)];
             processor.prepare(manager.getCurrentAudioDevice()->getCurrentSampleRate());
+            processor.setSuppressionAmount(routeSuppression[static_cast<std::size_t>(routeIndex)]);
+            processor.setPreset(protectionPreset.load(std::memory_order_relaxed));
+            processor.setEnabled(protectionEnabled.load(std::memory_order_relaxed));
             processor.clearBaseline();
             const auto found = baselines.find(keyForRoute(routeIndex));
             if (found != baselines.end()) processor.setBaseline(werfeed::detectionBaseline(found->second.responseDb));
@@ -124,16 +128,43 @@ public:
     bool isRunning() const noexcept { return running.load(); }
 
     void setProtection(const juce::DynamicObject& command) {
-        const auto shouldEnable = static_cast<bool>(getPropertyOr(command, "enabled", true));
-        const auto presetName = getPropertyOr(command, "preset", "speech").toString();
+        const auto hasEnabled = command.hasProperty("enabled");
+        const auto hasPreset = command.hasProperty("preset");
+        const auto hasRoute = command.hasProperty("route");
+        const auto hasSuppression = command.hasProperty("suppression");
+        const auto route = static_cast<int>(getPropertyOr(command, "route", -1));
+        if (hasSuppression) {
+            if (route < 0 || route >= routeCount) {
+                error("suppression route is invalid"); return;
+            }
+            const auto amount = static_cast<float>(static_cast<double>(
+                getPropertyOr(command, "suppression", 0.75)));
+            processors[static_cast<std::size_t>(route)].setSuppressionAmount(amount);
+        }
+        if (!hasEnabled && !hasPreset) {
+            emitState("protection_changed");
+            return;
+        }
+        const auto shouldEnable = static_cast<bool>(
+            getPropertyOr(command, "enabled", protectionEnabled.load()));
+        const auto presetName = getPropertyOr(command, "preset",
+            protectionPreset.load() == werfeed::ProtectionPreset::music ? "music" : "speech").toString();
         if (presetName != "speech" && presetName != "music") {
             error("protection preset must be speech or music"); return;
         }
         const auto selected = presetName == "music"
             ? werfeed::ProtectionPreset::music : werfeed::ProtectionPreset::speech;
-        for (auto& processor : processors) {
-            processor.setPreset(selected);
-            processor.setEnabled(shouldEnable);
+        if (hasRoute) {
+            if (route < 0 || route >= routeCount) {
+                error("protection route is invalid"); return;
+            }
+            processors[static_cast<std::size_t>(route)].setPreset(selected);
+            processors[static_cast<std::size_t>(route)].setEnabled(shouldEnable);
+        } else {
+            for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+                processors[static_cast<std::size_t>(routeIndex)].setPreset(selected);
+                processors[static_cast<std::size_t>(routeIndex)].setEnabled(shouldEnable);
+            }
         }
         protectionEnabled.store(shouldEnable);
         protectionPreset.store(selected);
@@ -274,23 +305,59 @@ public:
             calibratedRoutes.add(baselines.contains(keyForRoute(routeIndex)));
         o->setProperty("calibratedRoutes", juce::var(calibratedRoutes));
         o->setProperty("calibrated", routeCount > 0 && baselines.contains(keyForRoute(0)));
+        juce::Array<juce::var> routeTelemetry;
         juce::Array<juce::var> spectrum;
         juce::Array<juce::var> notches;
         int activeNotches = 0;
         float maximumCut = 0.0f;
-        if (routeCount > 0) {
-            const auto snapshot = processors[0].snapshot();
-            for (const auto value : snapshot.spectrumDb) spectrum.add(value);
+        for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+            const auto snapshot = processors[static_cast<std::size_t>(routeIndex)].snapshot();
+            auto* routeObject = new juce::DynamicObject();
+            routeObject->setProperty("route", routeIndex + 1);
+            routeObject->setProperty("enabled",
+                routes[static_cast<std::size_t>(routeIndex)].input >= 0 &&
+                routes[static_cast<std::size_t>(routeIndex)].output >= 0);
+            routeObject->setProperty("suppression", snapshot.suppressionAmount);
+            routeObject->setProperty("activeNotches", snapshot.activeNotches);
+            routeObject->setProperty("maximumCutDb", snapshot.maximumCutDb);
+            juce::Array<juce::var> routeSpectrum;
+            for (const auto value : snapshot.spectrumDb) {
+                routeSpectrum.add(value);
+                if (routeIndex == 0) spectrum.add(value);
+            }
+            routeObject->setProperty("spectrumDb", juce::var(routeSpectrum));
+            juce::Array<juce::var> routeNotches;
             for (const auto& notch : snapshot.notches) if (notch.active) {
                 auto* n = new juce::DynamicObject();
                 n->setProperty("frequency", notch.frequency);
                 n->setProperty("depthDb", notch.depthDb);
                 n->setProperty("q", notch.q);
-                notches.add(juce::var(n));
+                routeNotches.add(juce::var(n));
+                if (routeIndex == 0) {
+                    auto* legacyNotch = new juce::DynamicObject();
+                    legacyNotch->setProperty("frequency", notch.frequency);
+                    legacyNotch->setProperty("depthDb", notch.depthDb);
+                    legacyNotch->setProperty("q", notch.q);
+                    notches.add(juce::var(legacyNotch));
+                }
             }
-            activeNotches = snapshot.activeNotches;
-            maximumCut = snapshot.maximumCutDb;
+            routeObject->setProperty("notches", juce::var(routeNotches));
+            const auto found = baselines.find(keyForRoute(routeIndex));
+            routeObject->setProperty("calibrated", found != baselines.end());
+            if (found != baselines.end()) {
+                routeObject->setProperty("delayMs",
+                    found->second.delaySamples * 1000.0 / std::max(1.0, sampleRate.load()));
+                juce::Array<juce::var> response;
+                for (const auto value : found->second.responseDb) response.add(value);
+                routeObject->setProperty("calibrationResponseDb", juce::var(response));
+            }
+            routeTelemetry.add(juce::var(routeObject));
+            if (routeIndex == 0) {
+                activeNotches = snapshot.activeNotches;
+                maximumCut = snapshot.maximumCutDb;
+            }
         }
+        o->setProperty("routeTelemetry", juce::var(routeTelemetry));
         o->setProperty("spectrumDb", juce::var(spectrum));
         o->setProperty("notches", juce::var(notches));
         o->setProperty("activeNotches", activeNotches);
@@ -348,6 +415,7 @@ public:
         if (!saveCalibrations()) error("calibration completed but its baseline could not be persisted");
         auto* o = new juce::DynamicObject();
         o->setProperty("type", "calibration");
+        o->setProperty("route", calibrationRoute + 1);
         o->setProperty("routeKey", calibrationKey);
         o->setProperty("delaySamples", delay);
         o->setProperty("delayMs", delay * 1000.0 / rate);
@@ -419,12 +487,19 @@ private:
         for (int i = 0; i < array->size(); ++i) {
             auto* r = array->getReference(i).getDynamicObject();
             if (!r) { error("each route must be an object"); return false; }
-            routes[static_cast<size_t>(i)] = { static_cast<int>(r->getProperty("input")), static_cast<int>(r->getProperty("output")) };
+            const auto enabled = static_cast<bool>(getPropertyOr(*r, "enabled", true));
+            routes[static_cast<size_t>(i)] = {
+                enabled ? static_cast<int>(r->getProperty("input")) : -1,
+                enabled ? static_cast<int>(r->getProperty("output")) : -1
+            };
+            routeSuppression[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(
+                getPropertyOr(*r, "suppression", 0.75)));
         }
         routeCount = array->size(); return true;
     }
     juce::AudioDeviceManager manager;
     std::array<werfeed::Route, werfeed::maxRoutes> routes {};
+    std::array<float, werfeed::maxRoutes> routeSuppression {};
     std::array<werfeed::FeedbackProcessor, werfeed::maxRoutes> processors {};
     int routeCount = 0; // only changed while callback is detached
     std::atomic_bool configured { false }, running { false };

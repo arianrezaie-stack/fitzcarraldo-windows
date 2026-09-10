@@ -54,7 +54,7 @@ int main() {
     const auto snapshot = processor.snapshot();
     assert(snapshot.activeNotches > 0);
     assert(snapshot.activeNotches <= static_cast<int>(werfeed::maxNotches));
-    assert(snapshot.maximumCutDb >= -12.1f);
+    assert(snapshot.maximumCutDb >= -18.1f);
     const auto active = *std::min_element(snapshot.notches.begin(), snapshot.notches.end(),
         [](const werfeed::NotchSnapshot& a, const werfeed::NotchSnapshot& b) {
             const auto aDistance = a.active ? std::abs(std::log2(a.frequency / 1000.0f)) : 1000.0f;

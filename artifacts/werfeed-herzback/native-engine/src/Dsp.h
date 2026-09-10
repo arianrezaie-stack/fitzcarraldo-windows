@@ -29,6 +29,7 @@ struct ProtectionSnapshot {
     std::array<NotchSnapshot, maxNotches> notches {};
     int activeNotches = 0;
     float maximumCutDb = 0.0f;
+    float suppressionAmount = 0.75f;
 };
 
 inline std::vector<float> makeLogSweep(double sampleRate, double seconds,
@@ -129,6 +130,7 @@ public:
     void reset() noexcept {
         detectorSamples = 0;
         analysisBuffer.fill(0.0f);
+        persistence.fill(0);
         states = {};
         spectrumDb.fill(-120.0f);
         for (std::size_t i = 0; i < analyzerBins; ++i) publishedSpectrum[i].store(-120.0f);
@@ -141,6 +143,12 @@ public:
     void setEnabled(bool value) noexcept { enabled.store(value, std::memory_order_relaxed); }
     bool isEnabled() const noexcept { return enabled.load(std::memory_order_relaxed); }
     void setPreset(ProtectionPreset value) noexcept { preset.store(value, std::memory_order_relaxed); }
+    void setSuppressionAmount(float value) noexcept {
+        suppressionAmount.store(std::clamp(value, 0.0f, 1.0f), std::memory_order_relaxed);
+    }
+    float getSuppressionAmount() const noexcept {
+        return suppressionAmount.load(std::memory_order_relaxed);
+    }
     void setBaseline(const std::array<float, analyzerBins>& value) noexcept {
         for (std::size_t i = 0; i < analyzerBins; ++i)
             baseline[i].store(value[i], std::memory_order_relaxed);
@@ -166,12 +174,16 @@ public:
             const auto frequency = publishedFrequency[i].load(std::memory_order_relaxed);
             const auto depth = publishedDepth[i].load(std::memory_order_relaxed);
             const auto q = publishedQ[i].load(std::memory_order_relaxed);
-            result.notches[i] = { frequency, depth, q, depth < -0.1f };
+            // Do not report a notch while it is only carrying a sub-dB
+            // release tail; the UI and telemetry should describe audible
+            // protection moves, not filter state that is already gone.
+            result.notches[i] = { frequency, depth, q, depth < -1.0f };
             if (result.notches[i].active) {
                 ++result.activeNotches;
                 result.maximumCutDb = std::min(result.maximumCutDb, depth);
             }
         }
+        result.suppressionAmount = getSuppressionAmount();
         return result;
     }
 
@@ -235,7 +247,7 @@ private:
             }
         }
         const auto selectedPreset = preset.load(std::memory_order_relaxed);
-        const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech ? 13.0f : 16.0f;
+        const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech ? 15.0f : 17.0f;
         const auto releaseAboveBaseline = engageAboveBaseline - 5.0f;
         for (std::size_t bin = 0; bin < analyzerBins; ++bin) {
             const auto position = static_cast<float>(bin) / static_cast<float>(analyzerBins - 1);
@@ -250,7 +262,9 @@ private:
         std::array<std::size_t, maxNotches> candidateBins {};
         std::array<float, maxNotches> candidateScores {};
         candidateScores.fill(-std::numeric_limits<float>::infinity());
-        const auto requiredFrames = selectedPreset == ProtectionPreset::speech ? 3 : 8;
+        // A shorter window and a shorter speech gate reduce the time before a
+        // sustained howl is attenuated without removing the persistence check.
+        const auto requiredFrames = selectedPreset == ProtectionPreset::speech ? 2 : 6;
         const auto firstBin = std::max<std::size_t>(2, static_cast<std::size_t>(40.0 * fftSize / sampleRate));
         const auto lastBin = std::min<std::size_t>(fftSize / 2 - 2,
             static_cast<std::size_t>(std::min(20000.0, sampleRate * 0.45) * fftSize / sampleRate));
@@ -262,13 +276,26 @@ private:
             const auto magnitude = 4.0f * std::hypot(fftReal[fftBin], fftImag[fftBin]) /
                                    static_cast<float>(fftSize);
             const auto level = 20.0f * std::log10(magnitude + 1.0e-9f);
-            const auto left = 20.0f * std::log10(4.0f * std::hypot(fftReal[fftBin - 2], fftImag[fftBin - 2]) /
-                                                 static_cast<float>(fftSize) + 1.0e-9f);
-            const auto right = 20.0f * std::log10(4.0f * std::hypot(fftReal[fftBin + 2], fftImag[fftBin + 2]) /
-                                                  static_cast<float>(fftSize) + 1.0e-9f);
+            const auto neighborhoodRadius = std::min<std::size_t>(
+                { 8, fftBin - 1, fftSize / 2 - fftBin - 1 });
+            double neighborhoodPower = 0.0;
+            std::size_t neighborhoodBins = 0;
+            for (std::size_t offset = 2; offset <= neighborhoodRadius; ++offset) {
+                neighborhoodPower += std::hypot(fftReal[fftBin - offset], fftImag[fftBin - offset]);
+                neighborhoodPower += std::hypot(fftReal[fftBin + offset], fftImag[fftBin + offset]);
+                neighborhoodBins += 2;
+            }
+            const auto neighborhoodLevel = 20.0f * std::log10(
+                4.0f * static_cast<float>(neighborhoodPower /
+                    static_cast<double>(std::max<std::size_t>(1, neighborhoodBins))) /
+                static_cast<float>(fftSize) + 1.0e-9f);
             const auto excess = level - baseline[baselineBin].load(std::memory_order_relaxed);
-            const auto tonal = level - 0.5f * (left + right);
-            if (excess >= engageAboveBaseline && tonal >= 1.5f) {
+            // Broad speech fundamentals and harmonics are less likely to pass
+            // this wider neighborhood comparison than a narrow room howl.
+            const auto tonal = level - neighborhoodLevel;
+            const auto tonalThreshold = selectedPreset == ProtectionPreset::music
+                ? 8.0f : (frequency < 350.0f ? 7.0f : 4.0f);
+            if (excess >= engageAboveBaseline && tonal >= tonalThreshold) {
                 persistence[fftBin] = static_cast<unsigned char>(
                     std::min<int>(255, persistence[fftBin] + 1));
                 if (persistence[fftBin] < requiredFrames) continue;
@@ -327,14 +354,29 @@ private:
         if (!selected)
             selected = &*std::max_element(states.begin(), states.end(),
                 [](const Notch& a, const Notch& b) { return a.targetDepthDb < b.targetDepthDb; });
+        const auto amount = getSuppressionAmount();
+        if (amount <= 0.001f) return;
+        const auto maximumDepth = -amount * (selectedPreset == ProtectionPreset::speech ? 24.0f : 18.0f);
+        const auto centerBin = std::clamp<std::size_t>(
+            static_cast<std::size_t>(std::lround(frequency * fftSize / sampleRate)),
+            1, fftSize / 2 - 1);
+        const auto leftMagnitude = std::hypot(fftReal[centerBin - 1], fftImag[centerBin - 1]);
+        const auto centerMagnitude = std::hypot(fftReal[centerBin], fftImag[centerBin]);
+        const auto rightMagnitude = std::hypot(fftReal[centerBin + 1], fftImag[centerBin + 1]);
+        const auto curvature = leftMagnitude - 2.0f * centerMagnitude + rightMagnitude;
+        const auto interpolation = std::abs(curvature) > 1.0e-9f
+            ? std::clamp(0.5f * (leftMagnitude - rightMagnitude) / curvature, -0.5f, 0.5f)
+            : 0.0f;
         selected->sampleRate = sampleRate;
-        selected->frequency = std::clamp(frequency, 40.0f,
+        selected->frequency = std::clamp(static_cast<float>(
+            (static_cast<float>(centerBin) + interpolation) * sampleRate / fftSize), 40.0f,
             static_cast<float>(sampleRate * 0.45));
-        selected->q = selectedPreset == ProtectionPreset::speech ? 10.0f : 14.0f;
-        selected->targetDepthDb = std::max(selected->targetDepthDb - 2.0f,
-            selectedPreset == ProtectionPreset::speech ? -12.0f : -9.0f);
+        selected->q = selectedPreset == ProtectionPreset::speech ? 18.0f : 16.0f;
+        // Reach useful attenuation on the first engaged frame, then let the
+        // next frames move to the route's chosen maximum cut.
+        selected->targetDepthDb = std::max(selected->targetDepthDb - 4.5f, maximumDepth);
     }
-    static constexpr std::size_t fftSize = 2048;
+    static constexpr std::size_t fftSize = 1024;
     double sampleRate = 48000;
     int detectorSamples = 0;
     float wetMix = 0.0f;
@@ -347,6 +389,7 @@ private:
     std::array<std::atomic<float>, maxNotches> publishedFrequency {}, publishedDepth {}, publishedQ {};
     std::atomic_bool enabled { false };
     std::atomic<ProtectionPreset> preset { ProtectionPreset::speech };
+    std::atomic<float> suppressionAmount { 0.75f };
 };
 
 } // namespace werfeed

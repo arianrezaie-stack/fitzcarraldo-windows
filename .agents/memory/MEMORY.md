@@ -4,3 +4,4 @@
 - [GitHub Actions connector limits](github-actions-connector-limits.md) — workflow writes and archive downloads may be blocked; use manual workflow commits and check annotations.
 - [PowerShell validation compatibility](powershell-validation-compat.md) — keep evidence validators on arrays and simple host output for portable failure handling.
 - [Windows CI has no audio hardware](windows-ci-audio-hardware.md) — release validation must separate protocol success from physical device availability.
+- [Per-route feedback protection](per-route-feedback-protection.md) — keep route indices stable; expose independent telemetry/calibration and tune fast speech detection separately from music persistence.

@@ -85,13 +85,15 @@ hold for each phase; use a smaller value only for a smoke test.
 start, for example:
 
 ```json
-{"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":2,"outputChannels":2,"routes":[{"input":0,"output":0},{"input":1,"output":1}]}
+{"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":4,"outputChannels":4,"routes":[{"input":0,"output":0,"enabled":true,"suppression":0.75},{"input":1,"output":1,"enabled":true,"suppression":0.75},{"input":2,"output":2,"enabled":true,"suppression":0.75},{"input":3,"output":3,"enabled":true,"suppression":0.75}]}
 ```
 
 Commands are `list_devices`, `configure`, `start`, `stop`, `set_protection`,
 `start_calibration`, and the validation-only `test_marker`. Protection accepts
-`enabled` and a `speech` or `music` preset. Calibration accepts a zero-based
-route and a safe normalized level no higher than 0.08. Events use `type`:
+`enabled` and a `speech` or `music` preset. A route-specific suppression amount
+is set with `{"route":0,"suppression":0.75}` and remains in the range 0–1.
+Calibration accepts a zero-based route and a safe normalized level no higher
+than 0.08. Events use `type`:
 `hello`, `devices`, `state`, `telemetry`, `calibration`, `test_marker`, or
 `error`.
 Routes are ordered, mono, summed when sharing an output, and limited to eight.
@@ -106,8 +108,13 @@ All device types compiled into the native engine are enumerated and accepted.
 Calibration emits a bounded impulse followed by a two-second 20 Hz–20 kHz
 logarithmic sweep, finds loop delay with normalized cross-correlation, and
 persists the deconvolved 96-bin response per device route under the user's
-application-data directory. The detector uses baseline-relative hysteresis and
-at most six smoothly-ramped notch filters (speech: -12 dB, music: -9 dB).
+application-data directory. Telemetry exposes `routeTelemetry` for every
+configured route, including its live spectrum, active notches, suppression
+amount, calibration response, and measured delay. The detector uses the
+calibration response as a priority baseline, a faster speech gate, a more
+conservative music gate, and at most six smoothly-ramped notch filters. The
+route suppression amount scales the maximum cut from 0 to -24 dB in speech
+mode or 0 to -18 dB in music mode.
 
 `xruns` is a local callback-deadline estimate, not a driver reported glitch
 counter. Hardware and acoustic tests must be performed on Windows with the
