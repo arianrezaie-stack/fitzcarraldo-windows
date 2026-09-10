@@ -38,6 +38,7 @@ testem.log
 /typings
 artifacts/werfeed-herzback/desktop-dist/
 artifacts/werfeed-herzback/engine/
+artifacts/werfeed-herzback/native-engine/build/
 artifacts/werfeed-herzback/native-engine/build-windows/
 artifacts/werfeed-herzback/windows-validation-output/
 
