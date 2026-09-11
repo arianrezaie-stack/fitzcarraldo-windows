@@ -12,3 +12,4 @@
 - [Dynamic notch pool](dynamic-notch-pool.md) — pool six slots per configured route and redistribute only among armed routes without reducing eight-route capacity.
 - [Coupled-notch consolidation](coupled-notch-consolidation.md) — merge three clustered low-mid cuts into one wider, deeper center cut before publishing targets.
 - [Persistent feedback cuts](persistent-feedback-cuts.md) — recurring and manual cuts must be native-owned state, not renderer-only annotations.
+- [Two-stage feedback probe](two-stage-feedback-probe.md) — shallow native probe plus raw-source reassessment prevents normal tones from receiving full notches.

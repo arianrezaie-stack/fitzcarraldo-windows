@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, RefreshCw, RotateCcw, SlidersHorizontal, Timer, Volume2, Waves, X, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, RefreshCw, RotateCcw, SlidersHorizontal, Timer, TimerReset, Volume2, Waves, X, Zap } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -16,15 +16,15 @@ type DevicePair = { input: Device; output: Device; interfaceName: string; key: s
 type AudioChannelOption = { key: string; compatibilityKey: string; deviceType: string; deviceName: string; interfaceName: string; direction: 'input' | 'output'; channel: number; channelName: string; label: string };
 type EngineStatus = { state: string; reason?: string };
 type Notch = { frequency: number; depthDb: number; q: number };
-type RouteSnapshot = { route: number; enabled?: boolean; suppression?: number; calibrated?: boolean; delayMs?: number; calibrationResponseDb?: number[]; spectrumDb?: number[]; notches?: Notch[]; activeNotches?: number; maximumAllowedNotches?: number; maximumCutDb?: number };
+type RouteSnapshot = { route: number; enabled?: boolean; suppression?: number; timing?: number; latch?: number; calibrated?: boolean; delayMs?: number; calibrationResponseDb?: number[]; spectrumDb?: number[]; notches?: Notch[]; activeNotches?: number; maximumAllowedNotches?: number; maximumCutDb?: number };
 type Telemetry = { running?: boolean; sampleRate?: number; bufferSize?: number; callbackCpu?: number; xruns?: number; clockStability?: number; clockJitterMs?: number; inputPeak?: number; outputPeak?: number; protectionEnabled?: boolean; preset?: 'speech' | 'music'; calibrating?: boolean; calibrated?: boolean; calibratedRoutes?: boolean[]; spectrumDb?: number[]; notches?: Notch[]; activeNotches?: number; maximumCutDb?: number; routeTelemetry?: RouteSnapshot[] };
 type AudioState = { phase?: string; running?: boolean; sampleRate?: number; bufferSize?: number };
-type Route = { id: number; enabled: boolean; suppression: number; pairKey: string; inputKey: string; outputKey: string; inputChannel: number; outputChannel: number };
+type Route = { id: number; enabled: boolean; suppression: number; timing: number; latch: number; pairKey: string; inputKey: string; outputKey: string; inputChannel: number; outputChannel: number };
 type CalibrationRecord = { delayMs?: number; responseDb: number[] };
 type RecurringCutEvent = { frequency: number; timestamp: number };
 type RecurringCutAlert = { route: number; frequency: number };
-const recurringCutWindowMs = 10_000;
-const recurringCutThreshold = 6;
+const recurringCutWindowMs = 4_000;
+const recurringCutThreshold = 3;
 const sameCutFrequency = (left: number, right: number) => Math.abs(Math.log2(left / right)) < 0.08;
 const calibrationPeakProminenceDb = 3;
 const calibrationHasPeakAtFrequency = (responseDb: number[] | undefined, frequency: number) => {
@@ -205,10 +205,10 @@ function Home() {
   const [audioState, setAudioState] = useState<AudioState>({});
   const [telemetry, setTelemetry] = useState<Telemetry>({});
   const [routes, setRoutes] = useState<Route[]>([
-    { id: 1, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
-    { id: 2, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
-    { id: 3, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
-    { id: 4, enabled: true, suppression: 0.75, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
+    { id: 1, enabled: true, suppression: 0.75, timing: 0.5, latch: 0.5, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
+    { id: 2, enabled: true, suppression: 0.75, timing: 0.5, latch: 0.5, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
+    { id: 3, enabled: true, suppression: 0.75, timing: 0.5, latch: 0.5, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
+    { id: 4, enabled: true, suppression: 0.75, timing: 0.5, latch: 0.5, pairKey: '', inputKey: '', outputKey: '', inputChannel: -1, outputChannel: -1 },
   ]);
   const [buffer, setBuffer] = useState('128');
   const [message, setMessage] = useState('');
@@ -338,7 +338,9 @@ function Home() {
     && activeRouteSelection.input.compatibilityKey === activeRouteSelection.output.compatibilityKey;
   const activeSpectrum = activeRouteTelemetry?.spectrumDb ?? telemetry.spectrumDb;
    const activeNotches = activeRouteTelemetry?.notches ?? telemetry.notches;
-   const activeNotchCapacity = activeRouteTelemetry?.maximumAllowedNotches ?? 6;
+   const activeNotchCapacity = activeRouteTelemetry?.maximumAllowedNotches ?? 8;
+   const activeTiming = activeRouteTelemetry?.timing ?? activeRouteState?.timing ?? 0.5;
+   const activeLatch = activeRouteTelemetry?.latch ?? activeRouteState?.latch ?? 0.5;
   const clockScore = audioRunning && typeof telemetry.clockStability === 'number' ? Math.max(0, Math.min(1, telemetry.clockStability)) : undefined;
   const clockLabel = clockScore === undefined ? '—' : clockScore >= 0.98 ? 'Stable' : clockScore >= 0.9 ? 'Watch' : 'Unstable';
   const clockTone = clockScore === undefined ? undefined : clockScore >= 0.98 ? 'stable' : clockScore >= 0.9 ? 'watch' : 'unstable';
@@ -512,6 +514,8 @@ function Home() {
          output: routeSelection(route).output?.channel ?? -1,
         enabled: route.enabled,
         suppression: route.suppression,
+         timing: route.timing,
+         latch: route.latch,
       })),
     }).catch((error: unknown) => { setPendingStart(false); showToast(error instanceof Error ? error.message : 'Unable to configure native audio'); });
   };
@@ -621,6 +625,18 @@ function Home() {
     if (!bridge || !nativeReady || !audioRunning) return;
     void bridge.command('set_protection', { route: activeRoute, suppression: nextValue }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to change route suppression'));
   };
+  const setTiming = (value: number) => {
+    const nextValue = Math.max(0, Math.min(1, value));
+    setRoutes((items) => items.map((route) => route.id === activeRoute + 1 ? { ...route, timing: nextValue } : route));
+    if (!bridge || !nativeReady || !audioRunning) return;
+    void bridge.command('set_protection', { route: activeRoute, timing: nextValue }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to change notch timing'));
+  };
+  const setLatch = (value: number) => {
+    const nextValue = Math.max(0, Math.min(1, value));
+    setRoutes((items) => items.map((route) => route.id === activeRoute + 1 ? { ...route, latch: nextValue } : route));
+    if (!bridge || !nativeReady || !audioRunning) return;
+    void bridge.command('set_protection', { route: activeRoute, latch: nextValue }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to change notch latch'));
+  };
   const calibrate = () => {
     if (!bridge || !nativeReady || telemetry.calibrating || !activeRouteMapped) return;
     const accepted = window.confirm('Calibration emits an audible impulse and sweep. Set speaker gain low, clear the room near the loudspeaker, and keep a physical mute ready. Start calibration?');
@@ -671,7 +687,7 @@ function Home() {
       </section>
        <section className="route-focus-stack">
            <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector uses a virtual flat reference until calibration adds measured room weighting. Armed routes share 32 adaptive notch slots; disarmed routes return their share to the remaining routes.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / {activeNotchCapacity} cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} />{recurringCutAlert?.route === activeRoute + 1 && <div className="recurring-cut-alert" role="status" aria-live="polite"><span>Permanent system cut held at <strong>{recurringCutAlert.frequency.toLocaleString('en-US', { maximumFractionDigits: 0 })} Hz</strong> until you press X.</span><button type="button" className="recurring-cut-dismiss" onClick={dismissRecurringCutAlert} aria-label={`Remove permanent recurring ${Math.round(recurringCutAlert.frequency)} Hz cut`} title="Remove this permanent cut"><X size={15} /></button></div>}</section>
-        <section className={`panel route-protection-panel ${protectionActive ? '' : 'is-bypassed'}`}><div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> route {activeRoute + 1} protection</div><h3 className="section-title">{protectionActive ? 'Suppression armed' : 'Suppression bypassed'}</h3><p className="section-note">Mapped and armed routes receive basic suppression from the flat baseline immediately. Calibration now adds stronger measured-peak bias and deeper protection. The previous maximum depth is reached at 80%; the last 20% adds extra sensitivity, depth, and permanent repeating-cut retention.</p></div><Badge tone={protectionActive ? 'green' : 'red'}>{protectionActive ? 'armed' : 'bypassed'}</Badge></div><div className="mode-switch"><button type="button" className={preset === 'speech' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'speech')}><Mic2 size={13} /> Speech</button><button type="button" className={preset === 'music' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'music')}><Waves size={13} /> Music</button></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><SlidersHorizontal size={14} /> Suppression amount</div><p className="section-note">At 80%, protection reaches the former −24 dB maximum. At 100%, protection can reach −32 dB; above 80%, 3–4 repeating peaks are held permanently, and at 100% up to 8 repeating peaks can remain cut.</p></div><div className="fader-control"><div className="fader-scale"><span>light · 0 dB</span><span>deep · −32 dB</span></div><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round((activeRouteState?.suppression ?? 0.75) * 100)} disabled={!nativeReady} onChange={(event) => setSuppression(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} suppression amount`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 100%)` }} /><strong>{Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%</strong></div></div></section>
+        <section className={`panel route-protection-panel ${protectionActive ? '' : 'is-bypassed'}`}><div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> route {activeRoute + 1} protection</div><h3 className="section-title">{protectionActive ? 'Suppression armed' : 'Suppression bypassed'}</h3><p className="section-note">Measured hotspots must recur quickly before the native engine can latch them automatically. The user-suggested frequency remains a separate manual hold until X.</p></div><Badge tone={protectionActive ? 'green' : 'red'}>{protectionActive ? 'armed' : 'bypassed'}</Badge></div><div className="mode-switch"><button type="button" className={preset === 'speech' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'speech')}><Mic2 size={13} /> Speech</button><button type="button" className={preset === 'music' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'music')}><Waves size={13} /> Music</button></div><div className="protection-slider-stack"><div className="route-fader"><div className="fader-copy"><div className="curve-name"><TimerReset size={14} /> Timing</div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeTiming * 100)} disabled={!nativeReady} onChange={(event) => setTiming(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} notch timing`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeTiming * 100)}%, #4a3025 ${Math.round(activeTiming * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><LockKeyhole size={14} /> Latch</div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeLatch * 100)} disabled={!nativeReady} onChange={(event) => setLatch(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} notch latch`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeLatch * 100)}%, #4a3025 ${Math.round(activeLatch * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><SlidersHorizontal size={14} /> Suppression amount</div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round((activeRouteState?.suppression ?? 0.75) * 100)} disabled={!nativeReady} onChange={(event) => setSuppression(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} suppression amount`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 100%)` }} /></div></div></div></section>
        <section className="panel telemetry-panel">
         <div className="panel-heading"><div><div className="section-kicker"><Gauge size={14} /> live readings</div><h3 className="section-title">Engine and signal health</h3><p className="section-note">Telemetry stays visible below the control sections so live operation can be monitored without moving the routing controls.</p></div><Badge tone={audioRunning ? 'green' : 'quiet'}>{audioRunning ? 'audio running' : nativeReady ? 'engine connected' : 'waiting for engine'}</Badge></div>
         <div className="metrics">{[{ label: 'Callback CPU', value: value(telemetry.callbackCpu === undefined ? undefined : telemetry.callbackCpu * 100), unit: '%', icon: <Activity size={14} />, level: telemetry.callbackCpu === undefined ? undefined : telemetry.callbackCpu * 100 }, { label: 'Round-trip buffer', value: value(latency, 2), unit: 'ms est.', icon: <Gauge size={14} />, level: undefined }, { label: 'XRuns', value: telemetry.xruns === undefined ? '—' : String(telemetry.xruns), unit: 'local est.', icon: <Volume2 size={14} />, level: undefined }, { label: 'Clock stability', value: clockLabel, unit: clockScore === undefined ? '' : `${value(telemetry.clockJitterMs, 2)} ms jitter`, icon: <Timer size={14} />, level: clockScore === undefined ? undefined : clockScore * 100, tone: clockTone }].map((metric) => <div className="metric" key={metric.label}><div className="metric-head"><span>{metric.label}</span>{metric.icon}</div><div className={`metric-value ${metric.tone ?? ''}`}>{metric.value} <small>{metric.unit}</small></div><Meter level={metric.level} /></div>)}</div>
