@@ -621,9 +621,10 @@ private:
                 const auto calibrationHotspot =
                     calibrationPeakBias[candidateBaselineBin].load(
                         std::memory_order_relaxed) >= 1.5f;
-                engageFrequency(candidateFrequency, selectedPreset, calibrationHotspot);
+                engageFrequency(candidateFrequency, calibrationHotspot);
             }
         }
+        consolidateCoupledNotches(capacity);
         for (std::size_t i = 0; i < capacity; ++i) {
             auto& notch = analysisNotches[i];
             if (notch.frequency <= 0 || notchSeen[i]) continue;
@@ -656,8 +657,84 @@ private:
                   analysisBuffer.end(), analysisBuffer.begin());
         detectorSamples = fftSize - analysisHop;
     }
-    void engageFrequency(float frequency, ProtectionPreset selectedPreset,
-                         bool calibrationHotspot) noexcept {
+    void consolidateCoupledNotches(std::size_t capacity) noexcept {
+        // A low-frequency room mode can drift across a few nearby FFT peaks.
+        // When expanded route capacity lets three or more cuts collect in one
+        // third-octave area, use one wider and slightly deeper cut instead.
+        constexpr float maximumClusterFrequency = 1200.0f;
+        constexpr float maximumClusterSpanOctaves = 1.0f / 3.0f;
+        std::array<std::size_t, maxNotches> sortedIndices {};
+        std::size_t count = 0;
+        for (std::size_t i = 0; i < capacity; ++i) {
+            const auto& notch = analysisNotches[i];
+            if (notch.frequency <= 0.0f || notch.frequency > maximumClusterFrequency ||
+                notch.targetDepthDb >= -0.1f)
+                continue;
+            sortedIndices[count++] = i;
+        }
+        std::sort(sortedIndices.begin(), sortedIndices.begin() +
+            static_cast<std::ptrdiff_t>(count), [this](std::size_t left, std::size_t right) {
+                return analysisNotches[left].frequency < analysisNotches[right].frequency;
+            });
+
+        std::size_t groupStart = 0;
+        while (groupStart < count) {
+            std::size_t groupEnd = groupStart + 1;
+            const auto groupFloor = analysisNotches[sortedIndices[groupStart]].frequency;
+            while (groupEnd < count) {
+                const auto frequency = analysisNotches[sortedIndices[groupEnd]].frequency;
+                if (std::log2(frequency / groupFloor) > maximumClusterSpanOctaves) break;
+                ++groupEnd;
+            }
+            const auto groupSize = groupEnd - groupStart;
+            if (groupSize < 3) {
+                ++groupStart;
+                continue;
+            }
+
+            std::size_t survivor = sortedIndices[groupStart];
+            float weightedLogFrequency = 0.0f;
+            float totalWeight = 0.0f;
+            float deepestDepth = 0.0f;
+            bool calibrationHotspot = false;
+            int releaseHoldFrames = 0;
+            for (std::size_t position = groupStart; position < groupEnd; ++position) {
+                const auto index = sortedIndices[position];
+                const auto& notch = analysisNotches[index];
+                const auto weight = std::max(1.0f, -notch.targetDepthDb);
+                weightedLogFrequency += weight * std::log(notch.frequency);
+                totalWeight += weight;
+                if (notch.targetDepthDb < deepestDepth) {
+                    deepestDepth = notch.targetDepthDb;
+                    survivor = index;
+                }
+                calibrationHotspot = calibrationHotspot || notch.calibrationHotspot;
+                releaseHoldFrames = std::max(releaseHoldFrames, notch.releaseHoldFrames);
+            }
+            const auto centerFrequency = std::exp(weightedLogFrequency /
+                std::max(1.0f, totalWeight));
+            const auto maximumDepth = maximumSuppressionDepth(getSuppressionAmount());
+            const auto addedDepth = std::min(3.0f,
+                1.25f * static_cast<float>(groupSize - 2));
+            auto& merged = analysisNotches[survivor];
+            merged.frequency = centerFrequency;
+            merged.q = std::max(4.0f, notchQuality(centerFrequency) /
+                (1.0f + 0.25f * static_cast<float>(groupSize - 1)));
+            merged.targetDepthDb = std::max(maximumDepth, deepestDepth - addedDepth);
+            merged.calibrationHotspot = calibrationHotspot;
+            merged.releaseHoldFrames = releaseHoldFrames;
+            merged.quietFrames = 0;
+            notchSeen[survivor] = true;
+            for (std::size_t position = groupStart; position < groupEnd; ++position) {
+                const auto index = sortedIndices[position];
+                if (index == survivor) continue;
+                analysisNotches[index] = {};
+                notchSeen[index] = false;
+            }
+            groupStart = groupEnd;
+        }
+    }
+    void engageFrequency(float frequency, bool calibrationHotspot) noexcept {
         const auto capacity = getNotchCapacity();
         if (capacity == 0) return;
         ShadowNotch* selected = nullptr;

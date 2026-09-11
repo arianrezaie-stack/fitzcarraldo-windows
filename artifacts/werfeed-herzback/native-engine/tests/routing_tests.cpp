@@ -1,6 +1,15 @@
 #include "Routing.h"
 #include <array>
-#include <cassert>
+#include <iostream>
+
+#define REQUIRE(...) \
+    do { \
+        if (!(__VA_ARGS__)) { \
+            std::cerr << "routing-tests: check failed: " << #__VA_ARGS__ \
+                      << " (line " << __LINE__ << ")\n"; \
+            return 1; \
+        } \
+    } while (false)
 
 int main() {
     std::array<float, 4> in0 { 0.1f, -0.2f, 0.3f, -0.4f };
@@ -12,11 +21,11 @@ int main() {
     routes[0] = { 0, 1 };
     routes[1] = { 1, 0 };
     werfeed::routeMono(inputs, 2, outputs, 2, 4, routes, 2);
-    assert(out0 == in1);
-    assert(out1 == in0);
+    REQUIRE(out0 == in1);
+    REQUIRE(out1 == in0);
     routes[0] = { 9, 0 }; // invalid routes must be ignored safely.
     werfeed::routeMono(inputs, 2, outputs, 2, 4, routes, 1);
-    assert((out0 == std::array<float, 4> { 0, 0, 0, 0 }));
+    REQUIRE((out0 == std::array<float, 4> { 0, 0, 0, 0 }));
 
     // Calibration exclusively owns its selected output and silences every
     // ordinary/shared route so program audio cannot exceed the safe stimulus.
@@ -25,9 +34,9 @@ int main() {
     out0.fill(9.0f); out1.fill(9.0f);
     werfeed::routeCalibration(inputs, 2, outputs, 2, 4, { 0, 1 },
         excitation, recording, 0);
-    assert((out0 == std::array<float, 4> { 0, 0, 0, 0 }));
-    assert(out1 == excitation);
-    assert(std::equal(in0.begin(), in0.end(), recording.begin()));
+    REQUIRE((out0 == std::array<float, 4> { 0, 0, 0, 0 }));
+    REQUIRE(out1 == excitation);
+    REQUIRE(std::equal(in0.begin(), in0.end(), recording.begin()));
 
     // The optional announcement plays on the selected output, then a silent
     // one-second gap precedes the measured calibration excitation.
@@ -37,17 +46,17 @@ int main() {
     out0.fill(9.0f); out1.fill(9.0f);
     werfeed::routeCalibrationWithAnnouncement(inputs, 2, outputs, 2, 2, { 0, 1 },
         announcedExcitation, announcedRecording, announcement, 2, 0);
-    assert((std::array<float, 2> { out0[0], out0[1] } == std::array<float, 2> { 0, 0 }));
-    assert((std::array<float, 2> { out1[0], out1[1] } == announcement));
+    REQUIRE((std::array<float, 2> { out0[0], out0[1] } == std::array<float, 2> { 0, 0 }));
+    REQUIRE((std::array<float, 2> { out1[0], out1[1] } == announcement));
     out0.fill(9.0f); out1.fill(9.0f);
     werfeed::routeCalibrationWithAnnouncement(inputs, 2, outputs, 2, 2, { 0, 1 },
         announcedExcitation, announcedRecording, announcement, 2, 2);
-    assert((std::array<float, 2> { out1[0], out1[1] } == std::array<float, 2> { 0, 0 }));
+    REQUIRE((std::array<float, 2> { out1[0], out1[1] } == std::array<float, 2> { 0, 0 }));
     out0.fill(9.0f); out1.fill(9.0f);
     werfeed::routeCalibrationWithAnnouncement(inputs, 2, outputs, 2, 4, { 0, 1 },
         announcedExcitation, announcedRecording, announcement, 2, 4);
-    assert((out1 == std::array<float, 4> { 0.2f, 0.3f, 0, 0 }));
-    assert(std::equal(in0.begin(), in0.end(), announcedRecording.begin()));
+    REQUIRE((out1 == std::array<float, 4> { 0.2f, 0.3f, 0, 0 }));
+    REQUIRE(std::equal(in0.begin(), in0.end(), announcedRecording.begin()));
 
     // A four-channel interface can carry four independent mono routes in the
     // same callback. Route order is preserved even when the mappings cross.
@@ -61,8 +70,9 @@ int main() {
     routes[2] = { 2, 1 };
     routes[3] = { 3, 0 };
     werfeed::routeMono(fourInputs, 4, fourOutputs, 4, 4, routes, 4);
-    assert(out0 == in3);
-    assert(out1 == in2);
-    assert(out2 == in1);
-    assert(out3 == in0);
+    REQUIRE(out0 == in3);
+    REQUIRE(out1 == in2);
+    REQUIRE(out2 == in1);
+    REQUIRE(out3 == in0);
+    return 0;
 }
