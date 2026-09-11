@@ -101,15 +101,18 @@ public:
         const auto result = manager.initialise(inChannels, outChannels, nullptr, true, {}, &setup);
         if (result.isNotEmpty()) { error(result); return; }
         routeBaseKey = typeName + "|" + inputName + "|" + outputName;
-        for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
-            auto& processor = processors[static_cast<std::size_t>(routeIndex)];
-            processor.prepare(manager.getCurrentAudioDevice()->getCurrentSampleRate());
-            processor.setSuppressionAmount(routeSuppression[static_cast<std::size_t>(routeIndex)]);
-            processor.setPreset(protectionPreset.load(std::memory_order_relaxed));
-            processor.setEnabled(protectionEnabled.load(std::memory_order_relaxed));
-            processor.clearBaseline();
-            const auto found = baselines.find(keyForRoute(routeIndex));
-            if (found != baselines.end()) processor.setCalibrationProfile(found->second.responseDb);
+        {
+            const std::lock_guard<std::mutex> processorGuard(processorMutex);
+            for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+                auto& processor = processors[static_cast<std::size_t>(routeIndex)];
+                processor.prepare(manager.getCurrentAudioDevice()->getCurrentSampleRate());
+                processor.setSuppressionAmount(routeSuppression[static_cast<std::size_t>(routeIndex)]);
+                processor.setPreset(protectionPreset.load(std::memory_order_relaxed));
+                processor.setEnabled(protectionEnabled.load(std::memory_order_relaxed));
+                processor.clearBaseline();
+                const auto found = baselines.find(keyForRoute(routeIndex));
+                if (found != baselines.end()) processor.setCalibrationProfile(found->second.responseDb);
+            }
         }
         configured.store(true);
         emitState("configured");
@@ -222,6 +225,7 @@ public:
         clockJitterRatio.store(0.0, std::memory_order_relaxed);
         clockJitterMs.store(0.0, std::memory_order_relaxed);
         clockStability.store(0.0, std::memory_order_relaxed);
+        const std::lock_guard<std::mutex> processorGuard(processorMutex);
         for (auto& processor : processors) processor.prepare(device->getCurrentSampleRate());
         deviceActive.store(true);
     }
@@ -265,10 +269,13 @@ public:
             for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
                 const auto route = routes[static_cast<std::size_t>(routeIndex)];
                 if (route.input < 0 || route.input >= ins || route.output < 0 || route.output >= outs) continue;
+                auto& processor = processors[static_cast<std::size_t>(routeIndex)];
+                processor.pullPendingNotchUpdates();
                 for (int frame = 0; frame < samples; ++frame) {
-                    const auto value = processors[static_cast<std::size_t>(routeIndex)].process(input[route.input][frame]);
+                    const auto value = processor.process(input[route.input][frame]);
                     output[route.output][frame] += value;
                 }
+                processor.pushAnalysisBlock(input[route.input], samples);
             }
         }
         if (calibrationActive) {
@@ -467,6 +474,17 @@ public:
     }
     void reportLifecycle() {
         if (deviceStopPending.exchange(false) && !running.load()) emitState("device_stopped");
+    }
+
+    bool pumpAnalysis() {
+        if (!running.load(std::memory_order_relaxed)) return false;
+        const std::lock_guard<std::mutex> controlGuard(controlMutex);
+        if (!running.load(std::memory_order_relaxed)) return false;
+        const std::lock_guard<std::mutex> processorGuard(processorMutex);
+        bool any = false;
+        for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex)
+            any = processors[static_cast<std::size_t>(routeIndex)].pumpBackgroundAnalysis() || any;
+        return any;
     }
 
 private:
@@ -673,6 +691,7 @@ private:
     juce::String calibrationRouteKey;
     std::map<juce::String, Baseline> baselines;
     std::mutex controlMutex;
+    std::mutex processorMutex;
     std::chrono::steady_clock::time_point lastCallbackAt {};
     bool callbackTimingInitialised = false;
 };
@@ -693,6 +712,12 @@ int main() {
     }
     std::atomic_bool done { false };
     std::thread reporter([&] { while (!done.load()) { engine.reportLifecycle(); engine.finishCalibrationIfReady(); if (engine.isRunning()) engine.emitTelemetry(); std::this_thread::sleep_for(std::chrono::milliseconds(100)); } });
+    std::thread analysisThread([&] {
+        while (!done.load()) {
+            if (!engine.pumpAnalysis())
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
     std::string line;
     while (std::getline(std::cin, line)) {
         juce::var command; const auto result = juce::JSON::parse(juce::String(line), command);
@@ -708,7 +733,7 @@ int main() {
         else if (name == "test_marker") engine.emitTestMarker(*object);
         else error("unknown command");
     }
-    engine.stop(); done.store(true); reporter.join();
+    engine.stop(); done.store(true); reporter.join(); analysisThread.join();
     juce::Logger::setCurrentLogger(nullptr);
     return 0;
 }

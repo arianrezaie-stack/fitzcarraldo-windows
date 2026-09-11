@@ -21,6 +21,14 @@ double shapedRoomResponseDb(double frequency) {
         2.5 * std::sin(2.0 * werfeed::pi * 2.0 * position);
 }
 
+float processSample(werfeed::FeedbackProcessor& processor, float input) {
+    processor.pullPendingNotchUpdates();
+    const auto output = processor.process(input);
+    processor.pushAnalysisBlock(&input, 1);
+    while (processor.pumpBackgroundAnalysis()) {}
+    return output;
+}
+
 } // namespace
 
 int main() {
@@ -107,7 +115,7 @@ int main() {
     float previous = 0.0f;
     for (int i = 0; i < 48000; ++i) {
         const auto input = 0.3f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
-        const auto output = processor.process(input);
+        const auto output = processSample(processor, input);
         assert(std::isfinite(output));
         assert(std::abs(output - previous) < 0.5f); // coefficient ramp remains click-free.
         previous = output;
@@ -125,7 +133,7 @@ int main() {
     double inputPower = 0.0, outputPower = 0.0;
     for (int i = 0; i < 48000; ++i) {
         const auto input = 0.3f * std::sin(2.0f * werfeed::pi * active.frequency * i / 48000.0f);
-        const auto output = processor.process(input);
+        const auto output = processSample(processor, input);
         if (i > 24000) { inputPower += input * input; outputPower += output * output; }
     }
     assert(10.0 * std::log10(outputPower / inputPower) < -2.0);
@@ -133,7 +141,7 @@ int main() {
         werfeed::FeedbackProcessor offGrid;
         offGrid.prepare(rate); offGrid.clearBaseline(); offGrid.setEnabled(true);
         for (int i = 0; i < 144000; ++i)
-            offGrid.process(0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
+            processSample(offGrid, 0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
         const auto offGridSnapshot = offGrid.snapshot();
         assert(offGridSnapshot.activeNotches > 0);
         assert(offGridSnapshot.maximumCutDb < -6.0f);
@@ -149,7 +157,7 @@ int main() {
     quietFeedback.prepare(rate); quietFeedback.clearBaseline(); quietFeedback.setEnabled(true);
     int firstEngagedSample = -1;
     for (int i = 0; i < 144000; ++i) {
-        quietFeedback.process(0.006f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
+        processSample(quietFeedback, 0.006f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
         if (firstEngagedSample < 0 && quietFeedback.snapshot().activeNotches > 0)
             firstEngagedSample = i;
     }
@@ -162,7 +170,7 @@ int main() {
         releaseTone.prepare(rate); releaseTone.clearBaseline(); releaseTone.setEnabled(true);
         releaseTone.setSuppressionAmount(1.0f);
         for (int i = 0; i < 144000; ++i)
-            releaseTone.process(0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
+            processSample(releaseTone, 0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
         const auto releaseSnapshot = releaseTone.snapshot();
         assert(releaseSnapshot.activeNotches == 1);
         assert(releaseSnapshot.maximumCutDb <= -19.4f);
@@ -171,9 +179,9 @@ int main() {
                 return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.02f
                     && notch.q < 10.0f;
             }));
-        for (int i = 0; i < 48000; ++i) releaseTone.process(0.0f);
+        for (int i = 0; i < 48000; ++i) processSample(releaseTone, 0.0f);
         assert(releaseTone.snapshot().activeNotches == 1);
-        for (int i = 0; i < 180000; ++i) releaseTone.process(0.0f);
+        for (int i = 0; i < 180000; ++i) processSample(releaseTone, 0.0f);
         assert(releaseTone.snapshot().activeNotches == 0);
     }
     // The new speech scale reaches the former -12 dB maximum at 70%.
@@ -181,7 +189,7 @@ int main() {
     seventyPercent.prepare(rate); seventyPercent.setBaseline(baseline);
     seventyPercent.setEnabled(true); seventyPercent.setSuppressionAmount(0.7f);
     for (int i = 0; i < 96000; ++i)
-        seventyPercent.process(0.3f * std::sin(
+        processSample(seventyPercent, 0.3f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
     const auto seventySnapshot = seventyPercent.snapshot();
     assert(seventySnapshot.maximumCutDb >= -12.1f &&
@@ -196,8 +204,8 @@ int main() {
     for (int i = 0; i < 96000; ++i) {
         const auto borderlineTone = 0.003f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
-        thresholdAtSeventy.process(borderlineTone);
-        thresholdAtHundred.process(borderlineTone);
+        processSample(thresholdAtSeventy, borderlineTone);
+        processSample(thresholdAtHundred, borderlineTone);
     }
     assert(thresholdAtSeventy.snapshot().activeNotches == 0);
     assert(thresholdAtHundred.snapshot().activeNotches > 0);
@@ -216,19 +224,19 @@ int main() {
     calibratedHotspot.setEnabled(true);
     calibratedHotspot.setSuppressionAmount(1.0f);
     for (int i = 0; i < 96000; ++i)
-        calibratedHotspot.process(0.04f * std::sin(
+        processSample(calibratedHotspot, 0.04f * std::sin(
             2.0f * werfeed::pi * hotspotFrequency * i / 48000.0f));
     assert(calibratedHotspot.snapshot().activeNotches > 0);
-    for (int i = 0; i < 24000; ++i) calibratedHotspot.process(0.0f);
+    for (int i = 0; i < 24000; ++i) processSample(calibratedHotspot, 0.0f);
     assert(calibratedHotspot.snapshot().activeNotches > 0);
-    for (int i = 0; i < 240000; ++i) calibratedHotspot.process(0.0f);
+    for (int i = 0; i < 240000; ++i) processSample(calibratedHotspot, 0.0f);
     assert(calibratedHotspot.snapshot().activeNotches == 0);
     werfeed::FeedbackProcessor twoTone;
     twoTone.prepare(rate); twoTone.clearBaseline(); twoTone.setEnabled(true);
     for (int i = 0; i < 144000; ++i) {
         const auto input = 0.2f * std::sin(2.0f * werfeed::pi * 984.375f * i / 48000.0f) +
                            0.2f * std::sin(2.0f * werfeed::pi * 3000.0f * i / 48000.0f);
-        twoTone.process(input);
+        processSample(twoTone, input);
     }
     const auto twoToneSnapshot = twoTone.snapshot();
     assert(std::count_if(twoToneSnapshot.notches.begin(), twoToneSnapshot.notches.end(),
@@ -240,7 +248,7 @@ int main() {
         if (i == 3000) processor.setEnabled(false);
         if (i == 7000) processor.setEnabled(true);
         const auto input = 0.25f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
-        const auto output = processor.process(input);
+        const auto output = processSample(processor, input);
         assert(std::isfinite(output));
         if (i > 0) assert(std::abs(output - last) < 0.2f);
         last = output;
@@ -256,11 +264,11 @@ int main() {
         const auto note = notes[static_cast<std::size_t>(i / 3840) % notes.size()];
         const auto envelope = std::sin(werfeed::pi * static_cast<float>(i % 3840) / 3840.0f);
         const auto input = 0.22f * envelope * std::sin(2.0f * werfeed::pi * note * i / 48000.0f);
-        program.process(input);
+        processSample(program, input);
     }
     assert(program.snapshot().activeNotches == 0);
 
     // A malformed input sample must never propagate a non-finite output.
-    assert(std::isfinite(program.process(std::numeric_limits<float>::quiet_NaN())));
-    assert(std::isfinite(program.process(std::numeric_limits<float>::infinity())));
+    assert(std::isfinite(processSample(program, std::numeric_limits<float>::quiet_NaN())));
+    assert(std::isfinite(processSample(program, std::numeric_limits<float>::infinity())));
 }
