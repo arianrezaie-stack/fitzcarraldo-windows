@@ -57,6 +57,15 @@ if (BUILD_TESTING)
   target_compile_features(dsp-tests PRIVATE cxx_std_20)
   target_include_directories(dsp-tests PRIVATE src)
   add_test(NAME dsp-tests COMMAND dsp-tests)
+  add_executable(notch-redistribution-tests tests/notch_redistribution_tests.cpp)
+  target_compile_features(notch-redistribution-tests PRIVATE cxx_std_20)
+  target_link_libraries(notch-redistribution-tests PRIVATE juce::juce_core)
+  target_compile_definitions(notch-redistribution-tests PRIVATE
+    JUCE_APPLICATION_NAME_STRING="Werfeed Notch Redistribution Tests"
+    JUCE_APPLICATION_VERSION_STRING="${PROJECT_VERSION}"
+    JUCE_USE_CURL=0
+    WERFEED_NOTCH_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notch-redistribution.jsonl")
+  add_test(NAME notch-redistribution-tests COMMAND notch-redistribution-tests)
   add_executable(device-policy-tests tests/device_policy_tests.cpp)
   target_compile_features(device-policy-tests PRIVATE cxx_std_20)
   target_include_directories(device-policy-tests PRIVATE src)
