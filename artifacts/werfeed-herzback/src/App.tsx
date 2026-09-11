@@ -20,6 +20,11 @@ type Telemetry = { running?: boolean; sampleRate?: number; bufferSize?: number; 
 type AudioState = { phase?: string; running?: boolean; sampleRate?: number; bufferSize?: number };
 type Route = { id: number; enabled: boolean; suppression: number; pairKey: string; inputKey: string; outputKey: string; inputChannel: number; outputChannel: number };
 type CalibrationRecord = { delayMs?: number; responseDb: number[] };
+type RecurringCutEvent = { frequency: number; timestamp: number };
+type RecurringCutAlert = { route: number; frequency: number };
+const recurringCutWindowMs = 10_000;
+const recurringCutThreshold = 6;
+const sameCutFrequency = (left: number, right: number) => Math.abs(Math.log2(left / right)) < 0.08;
 const backendLabel = (deviceType: string) => {
   const normalized = deviceType.toLowerCase();
   if (normalized.includes('exclusive')) return 'WASAPI Exclusive';
@@ -196,6 +201,10 @@ function Home() {
   const [showCalibration, setShowCalibration] = useState(false);
   const [pendingCalibrationRoute, setPendingCalibrationRoute] = useState<number | null>(null);
   const [pendingCalibrationRestart, setPendingCalibrationRestart] = useState(false);
+  const recurringCutHistory = useRef<Record<number, RecurringCutEvent[]>>({});
+  const previousRouteNotches = useRef<Record<number, number[]>>({});
+  const recurringCutAlertRef = useRef<RecurringCutAlert | null>(null);
+  const [recurringCutAlert, setRecurringCutAlert] = useState<RecurringCutAlert | null>(null);
   const bypassInitialized = useRef(false);
 
   const pairs = useMemo<DevicePair[]>(() => {
@@ -503,6 +512,38 @@ function Home() {
     bypassInitialized.current = true;
     void bridge?.command('set_protection', { enabled: false, preset }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to set initial bypass'));
   }, [bridge, nativeReady, preset]);
+  useEffect(() => {
+    if (!nativeReady) {
+      recurringCutHistory.current = {};
+      previousRouteNotches.current = {};
+      recurringCutAlertRef.current = null;
+      setRecurringCutAlert(null);
+      return;
+    }
+    const now = Date.now();
+    telemetry.routeTelemetry?.forEach((snapshot) => {
+      const currentFrequencies = (snapshot.notches ?? [])
+        .map((notch) => notch.frequency)
+        .filter((frequency) => Number.isFinite(frequency) && frequency > 0);
+      const previousFrequencies = previousRouteNotches.current[snapshot.route] ?? [];
+      const freshEngagements = currentFrequencies.filter((frequency) =>
+        !previousFrequencies.some((previous) => sameCutFrequency(previous, frequency)));
+      const recentEvents = (recurringCutHistory.current[snapshot.route] ?? [])
+        .filter((event) => now - event.timestamp <= recurringCutWindowMs);
+      freshEngagements.forEach((frequency) => recentEvents.push({ frequency, timestamp: now }));
+      recurringCutHistory.current[snapshot.route] = recentEvents;
+      previousRouteNotches.current[snapshot.route] = currentFrequencies;
+
+      if (recurringCutAlertRef.current) return;
+      const firstQualifyingEvent = recentEvents.find((event) =>
+        recentEvents.filter((candidate) => sameCutFrequency(candidate.frequency, event.frequency)).length >= recurringCutThreshold);
+      if (firstQualifyingEvent) {
+        const alert = { route: snapshot.route, frequency: firstQualifyingEvent.frequency };
+        recurringCutAlertRef.current = alert;
+        setRecurringCutAlert(alert);
+      }
+    });
+  }, [nativeReady, telemetry.routeTelemetry]);
   const setProtection = (enabled: boolean, nextPreset = preset) => {
     if (!bridge || !nativeReady) return;
     setPreset(nextPreset);
@@ -570,8 +611,8 @@ function Home() {
           <div className="panel-heading"><div><div className="section-kicker"><BarChart3 size={14} /> calibration</div><h3 className="section-title">Measure one route at a time</h3><p className="section-note">Calibration is optional. Uncalibrated routes use a virtual flat frequency baseline for basic suppression; a measurement adds room-specific peak bias and hold timing.</p></div><Badge tone={telemetry.calibrating ? 'amber' : activeRouteCalibrated ? 'quiet' : 'green'}>{telemetry.calibrating ? 'sweep in progress' : activeRouteCalibrated ? 'measured baseline saved' : activeRouteMapped ? 'virtual flat baseline' : 'ready when audio is mapped'}</Badge></div>
          <div className="calibration-controls"><label className="mapping-field"><span>Calibration route</span><select value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))}>{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}{!route.enabled ? ' · standby' : ''}</option>)}</select></label><button type="button" className="plain-button footer-bypass" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteMapped} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : !activeRouteState.enabled ? `Arm & calibrate Route ${activeRoute + 1}` : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="plain-button calibration-reset-button" disabled={!nativeReady || !activeCalibration || telemetry.calibrating} onClick={resetCalibration}><RotateCcw size={14} /> Reset Route {activeRoute + 1}</button><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button></div>
       </section>
-      <section className="route-focus-stack">
-         <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector uses a virtual flat reference until calibration adds measured room weighting. Suppression still works whenever this route is mapped, armed, and not bypassed.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / 6 cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} /></section>
+       <section className="route-focus-stack">
+          <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector uses a virtual flat reference until calibration adds measured room weighting. Suppression still works whenever this route is mapped, armed, and not bypassed.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / 6 cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} />{recurringCutAlert?.route === activeRoute + 1 && <div className="recurring-cut-alert" role="status" aria-live="polite">Consider adding a system cut at <strong>{recurringCutAlert.frequency.toLocaleString('en-US', { maximumFractionDigits: 0 })} Hz</strong>. This frequency keeps returning.</div>}</section>
           <section className={`panel route-protection-panel ${protectionActive ? '' : 'is-bypassed'}`}><div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> route {activeRoute + 1} protection</div><h3 className="section-title">{protectionActive ? 'Suppression armed' : 'Suppression bypassed'}</h3><p className="section-note">Mapped and armed routes receive basic suppression from the flat baseline immediately. Calibration is optional and adds measured-peak bias without changing the bypass control.</p></div><Badge tone={protectionActive ? 'green' : 'red'}>{protectionActive ? 'armed' : 'bypassed'}</Badge></div><div className="mode-switch"><button type="button" className={preset === 'speech' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'speech')}><Mic2 size={13} /> Speech</button><button type="button" className={preset === 'music' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'music')}><Waves size={13} /> Music</button></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><SlidersHorizontal size={14} /> Suppression amount</div><p className="section-note">At 100%, protection reaches −24 dB. The detector is more sensitive above 1 kHz, with longer notch hold and release so fast-rising high-frequency feedback is caught sooner and stays controlled longer.</p></div><div className="fader-control"><div className="fader-scale"><span>light · 0 dB</span><span>deep · −24 dB</span></div><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round((activeRouteState?.suppression ?? 0.75) * 100)} disabled={!nativeReady} onChange={(event) => setSuppression(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} suppression amount`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 ${Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%, #4a3025 100%)` }} /><strong>{Math.round((activeRouteState?.suppression ?? 0.75) * 100)}%</strong></div></div></section>
       </section>
       <section className="panel telemetry-panel">

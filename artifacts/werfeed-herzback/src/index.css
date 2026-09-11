@@ -286,6 +286,8 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .spectrum-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .spectrum-axis span.first { transform: none; }
 .spectrum-axis span.last { transform: translateX(-100%); }
+.recurring-cut-alert { margin-top: 16px; color: #b29579; font: 700 18px/1.35 var(--app-font-serif); }
+.recurring-cut-alert strong { color: #fff; font-weight: 700; white-space: nowrap; }
 .side-stack { display: flex; flex-direction: column; gap: 24px; }
 .slot-count { color: #ad8d72; font: 9px var(--app-font-mono); }
 .cut-item { margin-top: 9px; border: 1px solid #664638; border-radius: 8px; padding: 10px; background: #261813; }
