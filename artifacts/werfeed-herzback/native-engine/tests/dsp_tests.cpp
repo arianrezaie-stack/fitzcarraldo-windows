@@ -10,6 +10,8 @@ namespace {
 
 constexpr double calibrationStartHz = 20.0;
 constexpr double calibrationEndHz = 20000.0;
+static_assert(sizeof(werfeed::FeedbackProcessor) < 200000,
+              "FeedbackProcessor must remain small enough for Windows test stacks");
 
 double shapedRoomResponseDb(double frequency) {
     const auto position = std::log(frequency / calibrationStartHz) /

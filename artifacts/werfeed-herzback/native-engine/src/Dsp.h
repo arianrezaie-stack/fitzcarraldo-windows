@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -262,7 +263,7 @@ public:
             targetSequence[i].store(0, std::memory_order_relaxed);
         }
         float discard[1024];
-        while (inputRing.pop(discard, 1024) > 0) {}
+        while (inputRing->pop(discard, 1024) > 0) {}
     }
     void setEnabled(bool value) noexcept { enabled.store(value, std::memory_order_relaxed); }
     bool isEnabled() const noexcept { return enabled.load(std::memory_order_relaxed); }
@@ -335,13 +336,13 @@ public:
     // no FFT, lock, allocation, or unbounded retry on the audio thread.
     void pushAnalysisBlock(const float* block, int numSamples) noexcept {
         if (block == nullptr || numSamples <= 0) return;
-        inputRing.pushFinite(block, static_cast<std::size_t>(numSamples));
+        inputRing->pushFinite(block, static_cast<std::size_t>(numSamples));
     }
 
     // Called only by the dedicated analysis thread.
     bool pumpBackgroundAnalysis() noexcept {
         float scratch[1024];
-        const auto popped = inputRing.pop(scratch, 1024);
+        const auto popped = inputRing->pop(scratch, 1024);
         for (std::size_t i = 0; i < popped; ++i) analyzeSample(scratch[i]);
         return popped > 0;
     }
@@ -670,7 +671,11 @@ private:
     std::array<bool, maxNotches> notchSeen {};
     std::array<float, analyzerBins> spectrumDb {};
     std::array<ShadowNotch, maxNotches> analysisNotches {};
-    SpscRingBuffer<1u << 16> inputRing;
+    // Keep the large cross-thread handoff off the object stack. Windows test
+    // executables commonly have a 1 MB default stack, while several
+    // FeedbackProcessor instances can coexist in the DSP regression suite.
+    std::unique_ptr<SpscRingBuffer<1u << 16>> inputRing =
+        std::make_unique<SpscRingBuffer<1u << 16>>();
     std::array<std::atomic<float>, analyzerBins> baseline {};
     std::array<std::atomic<float>, analyzerBins> calibrationPeakBias {};
     std::array<Notch, maxNotches> states {};
