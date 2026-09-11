@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -124,22 +125,22 @@ int main() {
     REQUIRE(std::abs(werfeed::notchQuality(4000.0f) - 20.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::notchQuality(10000.0f) - 30.0f) < 0.01f);
 
-    werfeed::FeedbackProcessor processor;
-    processor.prepare(rate);
-    processor.setEnabled(true);
-    processor.setSuppressionAmount(1.0f);
+    auto processor = std::make_unique<werfeed::FeedbackProcessor>();
+    processor->prepare(rate);
+    processor->setEnabled(true);
+    processor->setSuppressionAmount(1.0f);
     std::array<float, werfeed::analyzerBins> baseline {};
     baseline.fill(-80.0f);
-    processor.setBaseline(baseline);
+    processor->setBaseline(baseline);
     float previous = 0.0f;
     for (int i = 0; i < 48000; ++i) {
         const auto input = 0.3f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
-        const auto output = processSample(processor, input);
+        const auto output = processSample(*processor, input);
         REQUIRE(std::isfinite(output));
         REQUIRE(std::abs(output - previous) < 0.5f); // coefficient ramp remains click-free.
         previous = output;
     }
-    const auto snapshot = processor.snapshot();
+    const auto snapshot = processor->snapshot();
     REQUIRE(snapshot.activeNotches > 0);
     REQUIRE(snapshot.activeNotches <= static_cast<int>(werfeed::maxNotches));
     REQUIRE(snapshot.maximumCutDb >= -24.1f && snapshot.maximumCutDb <= -23.4f);
@@ -152,16 +153,16 @@ int main() {
     double inputPower = 0.0, outputPower = 0.0;
     for (int i = 0; i < 48000; ++i) {
         const auto input = 0.3f * std::sin(2.0f * werfeed::pi * active.frequency * i / 48000.0f);
-        const auto output = processSample(processor, input);
+        const auto output = processSample(*processor, input);
         if (i > 24000) { inputPower += input * input; outputPower += output * output; }
     }
     REQUIRE(10.0 * std::log10(outputPower / inputPower) < -2.0);
     for (const auto frequency : { 125.0f, 997.0f, 8000.0f, 15731.0f }) {
-        werfeed::FeedbackProcessor offGrid;
-        offGrid.prepare(rate); offGrid.clearBaseline(); offGrid.setEnabled(true);
+        auto offGrid = std::make_unique<werfeed::FeedbackProcessor>();
+        offGrid->prepare(rate); offGrid->clearBaseline(); offGrid->setEnabled(true);
         for (int i = 0; i < 144000; ++i)
-            processSample(offGrid, 0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
-        const auto offGridSnapshot = offGrid.snapshot();
+            processSample(*offGrid, 0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
+        const auto offGridSnapshot = offGrid->snapshot();
         REQUIRE(offGridSnapshot.activeNotches > 0);
         REQUIRE(offGridSnapshot.maximumCutDb < -6.0f);
         REQUIRE(std::any_of(offGridSnapshot.notches.begin(), offGridSnapshot.notches.end(),
@@ -172,25 +173,25 @@ int main() {
     }
     // A lower-level feedback tone should engage below the old 12 dB speech
     // gate while still passing the tonal and persistence checks.
-    werfeed::FeedbackProcessor quietFeedback;
-    quietFeedback.prepare(rate); quietFeedback.setEnabled(true);
+    auto quietFeedback = std::make_unique<werfeed::FeedbackProcessor>();
+    quietFeedback->prepare(rate); quietFeedback->setEnabled(true);
     int firstEngagedSample = -1;
     for (int i = 0; i < 144000; ++i) {
-        processSample(quietFeedback, 0.006f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
-        if (firstEngagedSample < 0 && quietFeedback.snapshot().activeNotches > 0)
+        processSample(*quietFeedback, 0.006f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
+        if (firstEngagedSample < 0 && quietFeedback->snapshot().activeNotches > 0)
             firstEngagedSample = i;
     }
     REQUIRE(firstEngagedSample >= 0 && firstEngagedSample < 4500);
-    REQUIRE(quietFeedback.snapshot().activeNotches > 0);
+    REQUIRE(quietFeedback->snapshot().activeNotches > 0);
     // Notch release is generic behavior, not a special case for 70 Hz:
     // exercise it at two representative low-frequency tones.
     for (const auto frequency : { 70.0f, 137.0f }) {
-        werfeed::FeedbackProcessor releaseTone;
-        releaseTone.prepare(rate); releaseTone.clearBaseline(); releaseTone.setEnabled(true);
-        releaseTone.setSuppressionAmount(1.0f);
+        auto releaseTone = std::make_unique<werfeed::FeedbackProcessor>();
+        releaseTone->prepare(rate); releaseTone->clearBaseline(); releaseTone->setEnabled(true);
+        releaseTone->setSuppressionAmount(1.0f);
         for (int i = 0; i < 144000; ++i)
-            processSample(releaseTone, 0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
-        const auto releaseSnapshot = releaseTone.snapshot();
+            processSample(*releaseTone, 0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
+        const auto releaseSnapshot = releaseTone->snapshot();
         REQUIRE(releaseSnapshot.activeNotches == 1);
         REQUIRE(releaseSnapshot.maximumCutDb <= -23.4f);
         REQUIRE(std::any_of(releaseSnapshot.notches.begin(), releaseSnapshot.notches.end(),
@@ -198,53 +199,53 @@ int main() {
                 return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.02f
                     && notch.q < 10.0f;
             }));
-        for (int i = 0; i < 96000; ++i) processSample(releaseTone, 0.0f);
-        REQUIRE(releaseTone.snapshot().activeNotches == 1);
-        for (int i = 0; i < 300000; ++i) processSample(releaseTone, 0.0f);
-        REQUIRE(releaseTone.snapshot().activeNotches == 0);
+        for (int i = 0; i < 96000; ++i) processSample(*releaseTone, 0.0f);
+        REQUIRE(releaseTone->snapshot().activeNotches == 1);
+        for (int i = 0; i < 300000; ++i) processSample(*releaseTone, 0.0f);
+        REQUIRE(releaseTone->snapshot().activeNotches == 0);
     }
     // The speech scale reaches -14 dB at 70% and -24 dB at full depth.
-    werfeed::FeedbackProcessor seventyPercent;
-    seventyPercent.prepare(rate); seventyPercent.setBaseline(baseline);
-    seventyPercent.setEnabled(true); seventyPercent.setSuppressionAmount(0.7f);
+    auto seventyPercent = std::make_unique<werfeed::FeedbackProcessor>();
+    seventyPercent->prepare(rate); seventyPercent->setBaseline(baseline);
+    seventyPercent->setEnabled(true); seventyPercent->setSuppressionAmount(0.7f);
     for (int i = 0; i < 96000; ++i)
-        processSample(seventyPercent, 0.3f * std::sin(
+        processSample(*seventyPercent, 0.3f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
-    const auto seventySnapshot = seventyPercent.snapshot();
+    const auto seventySnapshot = seventyPercent->snapshot();
     REQUIRE(seventySnapshot.maximumCutDb >= -14.1f &&
             seventySnapshot.maximumCutDb <= -13.4f);
     // The upper 30% of Speech lowers the threshold beyond the former maximum.
-    werfeed::FeedbackProcessor thresholdAtSeventy;
-    thresholdAtSeventy.prepare(rate); thresholdAtSeventy.clearBaseline();
-    thresholdAtSeventy.setEnabled(true); thresholdAtSeventy.setSuppressionAmount(0.7f);
-    werfeed::FeedbackProcessor thresholdAtHundred;
-    thresholdAtHundred.prepare(rate); thresholdAtHundred.clearBaseline();
-    thresholdAtHundred.setEnabled(true); thresholdAtHundred.setSuppressionAmount(1.0f);
+    auto thresholdAtSeventy = std::make_unique<werfeed::FeedbackProcessor>();
+    thresholdAtSeventy->prepare(rate); thresholdAtSeventy->clearBaseline();
+    thresholdAtSeventy->setEnabled(true); thresholdAtSeventy->setSuppressionAmount(0.7f);
+    auto thresholdAtHundred = std::make_unique<werfeed::FeedbackProcessor>();
+    thresholdAtHundred->prepare(rate); thresholdAtHundred->clearBaseline();
+    thresholdAtHundred->setEnabled(true); thresholdAtHundred->setSuppressionAmount(1.0f);
     for (int i = 0; i < 96000; ++i) {
         const auto borderlineTone = 0.003f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
-        processSample(thresholdAtSeventy, borderlineTone);
-        processSample(thresholdAtHundred, borderlineTone);
+        processSample(*thresholdAtSeventy, borderlineTone);
+        processSample(*thresholdAtHundred, borderlineTone);
     }
-    REQUIRE(thresholdAtSeventy.snapshot().activeNotches == 0);
-    REQUIRE(thresholdAtHundred.snapshot().activeNotches > 0);
+    REQUIRE(thresholdAtSeventy->snapshot().activeNotches == 0);
+    REQUIRE(thresholdAtHundred->snapshot().activeNotches > 0);
 
     // Above 1 kHz, the same borderline tone should cross the lower
     // frequency-weighted gate sooner.
-    werfeed::FeedbackProcessor lowFrequency;
-    lowFrequency.prepare(rate); lowFrequency.clearBaseline();
-    lowFrequency.setEnabled(true); lowFrequency.setSuppressionAmount(0.5f);
-    werfeed::FeedbackProcessor highFrequency;
-    highFrequency.prepare(rate); highFrequency.clearBaseline();
-    highFrequency.setEnabled(true); highFrequency.setSuppressionAmount(0.5f);
+    auto lowFrequency = std::make_unique<werfeed::FeedbackProcessor>();
+    lowFrequency->prepare(rate); lowFrequency->clearBaseline();
+    lowFrequency->setEnabled(true); lowFrequency->setSuppressionAmount(0.5f);
+    auto highFrequency = std::make_unique<werfeed::FeedbackProcessor>();
+    highFrequency->prepare(rate); highFrequency->clearBaseline();
+    highFrequency->setEnabled(true); highFrequency->setSuppressionAmount(0.5f);
     for (int i = 0; i < 96000; ++i) {
-        processSample(lowFrequency, 0.0035f * std::sin(
+        processSample(*lowFrequency, 0.0035f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
-        processSample(highFrequency, 0.0035f * std::sin(
+        processSample(*highFrequency, 0.0035f * std::sin(
             2.0f * werfeed::pi * 4000.0f * i / 48000.0f));
     }
-    REQUIRE(lowFrequency.snapshot().activeNotches == 0);
-    REQUIRE(highFrequency.snapshot().activeNotches > 0);
+    REQUIRE(lowFrequency->snapshot().activeNotches == 0);
+    REQUIRE(highFrequency->snapshot().activeNotches > 0);
 
     // A calibrated resonance remains protected longer than an ordinary tone.
     constexpr float hotspotFrequency = 1000.0f;
@@ -254,37 +255,37 @@ int main() {
     std::array<float, werfeed::analyzerBins> hotspotResponse {};
     hotspotResponse.fill(0.0f);
     hotspotResponse[hotspotBin] = 14.0f;
-    werfeed::FeedbackProcessor calibratedHotspot;
-    calibratedHotspot.prepare(rate);
-    calibratedHotspot.setCalibrationProfile(hotspotResponse);
-    calibratedHotspot.setEnabled(true);
-    calibratedHotspot.setSuppressionAmount(1.0f);
+    auto calibratedHotspot = std::make_unique<werfeed::FeedbackProcessor>();
+    calibratedHotspot->prepare(rate);
+    calibratedHotspot->setCalibrationProfile(hotspotResponse);
+    calibratedHotspot->setEnabled(true);
+    calibratedHotspot->setSuppressionAmount(1.0f);
     for (int i = 0; i < 96000; ++i)
-        processSample(calibratedHotspot, 0.04f * std::sin(
+        processSample(*calibratedHotspot, 0.04f * std::sin(
             2.0f * werfeed::pi * hotspotFrequency * i / 48000.0f));
-    REQUIRE(calibratedHotspot.snapshot().activeNotches > 0);
-    for (int i = 0; i < 24000; ++i) processSample(calibratedHotspot, 0.0f);
-    REQUIRE(calibratedHotspot.snapshot().activeNotches > 0);
-    for (int i = 0; i < 240000; ++i) processSample(calibratedHotspot, 0.0f);
-    REQUIRE(calibratedHotspot.snapshot().activeNotches > 0);
-    for (int i = 0; i < 240000; ++i) processSample(calibratedHotspot, 0.0f);
-    REQUIRE(calibratedHotspot.snapshot().activeNotches == 0);
-    werfeed::FeedbackProcessor twoTone;
-    twoTone.prepare(rate); twoTone.clearBaseline(); twoTone.setEnabled(true);
+    REQUIRE(calibratedHotspot->snapshot().activeNotches > 0);
+    for (int i = 0; i < 24000; ++i) processSample(*calibratedHotspot, 0.0f);
+    REQUIRE(calibratedHotspot->snapshot().activeNotches > 0);
+    for (int i = 0; i < 240000; ++i) processSample(*calibratedHotspot, 0.0f);
+    REQUIRE(calibratedHotspot->snapshot().activeNotches > 0);
+    for (int i = 0; i < 240000; ++i) processSample(*calibratedHotspot, 0.0f);
+    REQUIRE(calibratedHotspot->snapshot().activeNotches == 0);
+    auto twoTone = std::make_unique<werfeed::FeedbackProcessor>();
+    twoTone->prepare(rate); twoTone->clearBaseline(); twoTone->setEnabled(true);
     for (int i = 0; i < 144000; ++i) {
         const auto input = 0.2f * std::sin(2.0f * werfeed::pi * 984.375f * i / 48000.0f) +
                            0.2f * std::sin(2.0f * werfeed::pi * 3000.0f * i / 48000.0f);
-        processSample(twoTone, input);
+        processSample(*twoTone, input);
     }
-    const auto twoToneSnapshot = twoTone.snapshot();
+    const auto twoToneSnapshot = twoTone->snapshot();
     REQUIRE(std::count_if(twoToneSnapshot.notches.begin(), twoToneSnapshot.notches.end(),
         [](const werfeed::NotchSnapshot& notch) { return notch.active; }) >= 2);
 
     // Three low-mid peaks that need their own narrow cuts should be collapsed
     // into one weighted-center cut with a wider band and slightly deeper depth.
-    werfeed::FeedbackProcessor coupledLowMid;
-    coupledLowMid.prepare(rate); coupledLowMid.clearBaseline();
-    coupledLowMid.setEnabled(true); coupledLowMid.setSuppressionAmount(1.0f);
+    auto coupledLowMid = std::make_unique<werfeed::FeedbackProcessor>();
+    coupledLowMid->prepare(rate); coupledLowMid->clearBaseline();
+    coupledLowMid->setEnabled(true); coupledLowMid->setSuppressionAmount(1.0f);
     constexpr std::array<float, 3> coupledFrequencies {
         175.78125f, 199.21875f, 222.65625f,
     };
@@ -292,9 +293,9 @@ int main() {
         float input = 0.0f;
         for (const auto frequency : coupledFrequencies)
             input += 0.1f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f);
-        processSample(coupledLowMid, input);
+        processSample(*coupledLowMid, input);
     }
-    const auto coupledSnapshot = coupledLowMid.snapshot();
+    const auto coupledSnapshot = coupledLowMid->snapshot();
     const auto coupledCount = std::count_if(coupledSnapshot.notches.begin(),
         coupledSnapshot.notches.end(), [](const werfeed::NotchSnapshot& notch) {
             return notch.active && notch.frequency >= 160.0f && notch.frequency <= 240.0f;
@@ -310,9 +311,9 @@ int main() {
 
     // A route that receives released capacity can hold more than the normal
     // six simultaneous cuts without allocating on the realtime thread.
-    werfeed::FeedbackProcessor expanded;
-    expanded.prepare(rate); expanded.clearBaseline(); expanded.setEnabled(true);
-    expanded.setNotchCapacity(8);
+    auto expanded = std::make_unique<werfeed::FeedbackProcessor>();
+    expanded->prepare(rate); expanded->clearBaseline(); expanded->setEnabled(true);
+    expanded->setNotchCapacity(8);
     constexpr std::array<float, 8> expandedFrequencies {
         187.5f, 375.0f, 750.0f, 1500.0f,
         3000.0f, 6000.0f, 9000.0f, 12000.0f,
@@ -321,62 +322,62 @@ int main() {
         float input = 0.0f;
         for (const auto frequency : expandedFrequencies)
             input += 0.035f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f);
-        processSample(expanded, input);
+        processSample(*expanded, input);
     }
-    const auto expandedSnapshot = expanded.snapshot();
-    REQUIRE(expanded.getNotchCapacity() == 8);
+    const auto expandedSnapshot = expanded->snapshot();
+    REQUIRE(expanded->getNotchCapacity() == 8);
     REQUIRE(expandedSnapshot.activeNotches > 6);
     REQUIRE(expandedSnapshot.activeNotches <= 8);
 
     // A live route re-arm must not expose the previous route's cuts while
     // capacity is being redistributed.
-    expanded.setNotchCapacity(12);
-    expanded.requestNotchReset();
-    expanded.pullPendingNotchUpdates();
-    expanded.pumpBackgroundAnalysis();
-    const auto rearmedSnapshot = expanded.snapshot();
-    REQUIRE(expanded.getNotchCapacity() == 12);
+    expanded->setNotchCapacity(12);
+    expanded->requestNotchReset();
+    expanded->pullPendingNotchUpdates();
+    expanded->pumpBackgroundAnalysis();
+    const auto rearmedSnapshot = expanded->snapshot();
+    REQUIRE(expanded->getNotchCapacity() == 12);
     REQUIRE(rearmedSnapshot.activeNotches == 0);
 
-    werfeed::FeedbackProcessor limited;
-    limited.prepare(rate); limited.clearBaseline(); limited.setEnabled(true);
-    limited.setNotchCapacity(1);
+    auto limited = std::make_unique<werfeed::FeedbackProcessor>();
+    limited->prepare(rate); limited->clearBaseline(); limited->setEnabled(true);
+    limited->setNotchCapacity(1);
     for (int i = 0; i < 96000; ++i) {
         const auto input =
             0.15f * std::sin(2.0f * werfeed::pi * 750.0f * i / 48000.0f) +
             0.15f * std::sin(2.0f * werfeed::pi * 3000.0f * i / 48000.0f);
-        processSample(limited, input);
+        processSample(*limited, input);
     }
-    REQUIRE(limited.snapshot().activeNotches == 1);
+    REQUIRE(limited->snapshot().activeNotches == 1);
 
     // Bypass transitions remain continuous while wet filter history advances.
     float last = 0.0f;
     for (int i = 0; i < 12000; ++i) {
-        if (i == 3000) processor.setEnabled(false);
-        if (i == 7000) processor.setEnabled(true);
+        if (i == 3000) processor->setEnabled(false);
+        if (i == 7000) processor->setEnabled(true);
         const auto input = 0.25f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
-        const auto output = processSample(processor, input);
+        const auto output = processSample(*processor, input);
         REQUIRE(std::isfinite(output));
         if (i > 0) REQUIRE(std::abs(output - last) < 0.2f);
         last = output;
     }
 
     // Short, moving tonal program peaks do not satisfy persistence.
-    werfeed::FeedbackProcessor program;
-    program.prepare(rate); program.clearBaseline(); program.setPreset(werfeed::ProtectionPreset::music);
-    program.setEnabled(true);
+    auto program = std::make_unique<werfeed::FeedbackProcessor>();
+    program->prepare(rate); program->clearBaseline(); program->setPreset(werfeed::ProtectionPreset::music);
+    program->setEnabled(true);
     constexpr std::array<float, 8> notes { 220.0f, 329.63f, 440.0f, 587.33f,
                                            261.63f, 392.0f, 523.25f, 783.99f };
     for (int i = 0; i < 96000; ++i) {
         const auto note = notes[static_cast<std::size_t>(i / 3840) % notes.size()];
         const auto envelope = std::sin(werfeed::pi * static_cast<float>(i % 3840) / 3840.0f);
         const auto input = 0.22f * envelope * std::sin(2.0f * werfeed::pi * note * i / 48000.0f);
-        processSample(program, input);
+        processSample(*program, input);
     }
-    REQUIRE(program.snapshot().activeNotches == 0);
+    REQUIRE(program->snapshot().activeNotches == 0);
 
     // A malformed input sample must never propagate a non-finite output.
-    REQUIRE(std::isfinite(processSample(program, std::numeric_limits<float>::quiet_NaN())));
-    REQUIRE(std::isfinite(processSample(program, std::numeric_limits<float>::infinity())));
+    REQUIRE(std::isfinite(processSample(*program, std::numeric_limits<float>::quiet_NaN())));
+    REQUIRE(std::isfinite(processSample(*program, std::numeric_limits<float>::infinity())));
     return 0;
 }
