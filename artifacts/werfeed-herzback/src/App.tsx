@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, RefreshCw, RotateCcw, SlidersHorizontal, Timer, Volume2, Waves, X, Zap } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import watermarkUrl from '@assets/wfhb-bg_1789115944261.png';
 
 const queryClient = new QueryClient();
 const frequencyPosition = (frequency: number) => (Math.log10(frequency / 20) / Math.log10(20000 / 20)) * 100;
@@ -548,7 +549,8 @@ function Home() {
   const activeInputOptions = scopedOptions(inputOptions, activeRouteState);
   const activeOutputOptions = scopedOptions(outputOptions, activeRouteState);
 
-  return <div className="app-shell">
+  const shellStyle = { '--watermark-image': `url("${watermarkUrl}")` } as CSSProperties;
+  return <div className="app-shell" style={shellStyle}>
     {message && <div className="toast" role="status"><AlertTriangle size={14} /> {message}</div>}
     <header className="app-header">
        <div className="brand-lockup"><div className="brand-mark"><AudioLines size={20} /></div><div><div className="eyebrow">Arian Rezaie's Adaptive Feedback Control</div><h1 className="brand-title">Werfeed Herzback <span>· by Arian Rezaie</span></h1></div></div>

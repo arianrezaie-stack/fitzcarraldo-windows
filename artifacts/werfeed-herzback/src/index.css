@@ -76,12 +76,31 @@ button { cursor: pointer; }
 button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 
 .app-shell {
+  position: relative;
+  isolation: isolate;
   min-height: 100dvh;
   padding: 18px clamp(14px, 3vw, 42px) 30px;
   background:
     radial-gradient(circle at 9% 4%, rgba(191, 135, 80, .12), transparent 26rem),
     repeating-linear-gradient(112deg, rgba(116, 75, 48, .1) 0 1px, transparent 1px 6px),
     linear-gradient(145deg, #2d1c16, #1a100d 72%);
+}
+.app-shell::before {
+  content: "";
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  background-image: var(--watermark-image);
+  background-position: right 7% top 86px;
+  background-size: min(787px, 68vw) auto;
+  background-repeat: no-repeat;
+  opacity: .22;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.app-shell > * {
+  position: relative;
+  z-index: 1;
 }
 .app-shell::after {
   content: "";
