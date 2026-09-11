@@ -40,6 +40,12 @@ cables, loopback devices, and common virtual ASIO drivers are excluded before
 they reach the renderer. Every emitted record includes `transport: "USB"` or
 `transport: "Ethernet audio"` and `hardwareEligible: true`.
 
+Windows release builds enable JUCE's native ASIO device type using the official
+Steinberg ASIO SDK 2.3.3 archive, verified by SHA-256 before compilation.
+WASAPI and DirectSound remain compiled alongside ASIO. ASIO drivers therefore
+appear through the same independent mono input and output selectors as the
+other Windows backends.
+
 For a complete MSVC build, test, device-enumeration capture, and Electron
 portable package, run this from the app directory in PowerShell:
 

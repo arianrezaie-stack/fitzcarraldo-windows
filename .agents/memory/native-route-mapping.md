@@ -20,3 +20,9 @@ Native discovery scans every active endpoint exposed by the selected JUCE backen
 **Why:** Users need to map any connected active interface, including endpoints whose Windows names do not contain a recognizable USB or Ethernet token.
 
 **How to apply:** Retain transport and eligibility metadata for diagnostics, but do not discard an endpoint before channel enumeration solely because its transport cannot be inferred from the name.
+
+Named endpoints must also survive discovery when an unopened JUCE device reports no channel names or active-channel mask. Expose a mono Channel 1 fallback and let the configure/open operation validate the mapping.
+
+**Why:** Some Windows WASAPI and ASIO drivers defer channel metadata until the endpoint is opened; using pre-open channel metadata as an enumeration gate leaves both selectors empty.
+
+**How to apply:** Treat `getDeviceNames()` as the discovery authority. Use channel names and masks when available, but never require them to emit the endpoint record.

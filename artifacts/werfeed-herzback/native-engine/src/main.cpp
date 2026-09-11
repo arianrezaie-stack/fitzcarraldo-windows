@@ -575,20 +575,22 @@ private:
         const auto activeChannels = device
             ? (input ? device->getActiveInputChannels() : device->getActiveOutputChannels())
             : juce::BigInteger {};
-        // JUCE exposes channel names and the active-channel mask separately.
-        // Some Windows drivers provide the mask but leave the name array
-        // empty, so use both sources instead of dropping a usable endpoint.
-        const auto channelCount = std::max(channelNames.size(), activeChannels.getHighestBit() + 1);
-        if (!device || channelCount <= 0) return;
+        // Keep discovery device-name-first, as in the original working
+        // implementation. Some WASAPI and ASIO drivers do not expose channel
+        // metadata until their endpoint is opened. Dropping those records here
+        // makes the renderer selectors permanently empty, so expose a mono
+        // Channel 1 fallback and let configure() perform the authoritative open.
+        const auto reportedChannelCount = std::max(
+            channelNames.size(), activeChannels.getHighestBit() + 1);
+        const auto channelCount = juce::jlimit(
+            1, 64, reportedChannelCount > 0 ? reportedChannelCount : 1);
         d->setProperty("deviceType", type.getTypeName());
         d->setProperty("name", name);
         d->setProperty("interfaceName", interfaceNameFor(name));
         d->setProperty("direction", input ? "input" : "output");
         d->setProperty("transport", werfeed::deviceTransportLabel(eligibility.transport));
-        // Discovery covers every active endpoint. Transport classification is
-        // retained as metadata for the UI and evidence, but it must not hide
-        // a connected interface before the user can map it.
-        d->setProperty("hardwareEligible", eligibility.allowed);
+        d->setProperty("hardwareEligible", true);
+        d->setProperty("channelMetadataReported", reportedChannelCount > 0);
         d->setProperty("channels", channelCount);
         juce::Array<juce::var> channelLabels;
         for (int channel = 0; channel < channelCount; ++channel) {

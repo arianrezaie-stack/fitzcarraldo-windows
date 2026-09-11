@@ -9,7 +9,7 @@ const queryClient = new QueryClient();
 const frequencyPosition = (frequency: number) => (Math.log10(frequency / 20) / Math.log10(20000 / 20)) * 100;
 const spectrumTicks = [{ frequency: 20, label: '20 Hz' }, { frequency: 500, label: '500 Hz' }, { frequency: 2000, label: '2 kHz' }, { frequency: 8000, label: '8 kHz' }, { frequency: 20000, label: '20 kHz' }];
 
-type Device = { deviceType: string; name: string; interfaceName?: string; direction: 'input' | 'output'; channels?: number; channelNames?: string[]; transport?: string; hardwareEligible?: boolean };
+type Device = { deviceType: string; name: string; interfaceName?: string; direction: 'input' | 'output'; channels?: number; channelNames?: string[]; transport?: string; hardwareEligible?: boolean; channelMetadataReported?: boolean };
 type DevicePair = { input: Device; output: Device; interfaceName: string; key: string };
 type AudioChannelOption = { key: string; compatibilityKey: string; deviceType: string; deviceName: string; interfaceName: string; direction: 'input' | 'output'; channel: number; channelName: string; label: string };
 type EngineStatus = { state: string; reason?: string };
@@ -211,12 +211,15 @@ function Home() {
         || a.interfaceName.localeCompare(b.interfaceName));
   }, [devices]);
   const channelOptions = useMemo<AudioChannelOption[]>(() => devices.flatMap((device) => {
-    const channelCount = Math.max(0, Math.min(64, device.channels ?? 0));
-    if (!channelCount) return [];
+    // The native engine keeps named endpoints discoverable even when a Windows
+    // driver withholds channel metadata until configure/open. Preserve that
+    // compatibility behavior here instead of turning a valid endpoint into an
+    // empty disabled selector.
+    const channelCount = Math.max(1, Math.min(64, device.channels ?? 1));
     const compatibilityKey = interfaceKey(device);
     return Array.from({ length: channelCount }, (_, channel) => {
-      const channelName = device.channelNames?.[channel]?.trim();
-      if (!channelName) return null;
+      const channelName = device.channelNames?.[channel]?.trim()
+        || `${device.direction === 'input' ? 'Input' : 'Output'} channel ${channel + 1}`;
       return {
         key: `${device.deviceType}\u0000${device.name}\u0000${device.direction}\u0000${channel}`,
         compatibilityKey,
@@ -228,7 +231,7 @@ function Home() {
         channelName,
         label: `${device.transport ? `${device.transport} · ` : ''}${backendLabel(device.deviceType)} · ${interfaceName(device)} · ${channelName}`,
       };
-    }).filter((option): option is AudioChannelOption => option !== null);
+    });
   }), [devices]);
   const inputOptions = useMemo(() => channelOptions.filter((option) => option.direction === 'input'), [channelOptions]);
   const outputOptions = useMemo(() => channelOptions.filter((option) => option.direction === 'output'), [channelOptions]);
@@ -467,7 +470,7 @@ function Home() {
       </div>
     </header>
     <main className="main-content section-stack">
-      <AudioMappingPanel activeRoute={activeRoute} route={activeRouteState} inputOptions={activeInputOptions} outputOptions={activeOutputOptions} nativeBridgeAvailable={!!bridge} nativeReady={nativeReady} audioRunning={audioRunning} onInputChange={(key) => updateActiveRouteChannel('input', key)} onOutputChange={(key) => updateActiveRouteChannel('output', key)} sharedDescription={sharedCompatibilityKey && sharedInputOption ? `${backendLabel(sharedInputOption.deviceType)} · ${sharedInputOption.interfaceName}` : mappingCompatibilityKey ? 'Other routes limited to the selected interface' : !bridge ? 'Open the Windows desktop app to access native audio devices' : inputOptions.length && outputOptions.length ? 'Choose an input and output on a route to lock the shared clock' : 'Native engine has not reported eligible mono channel records'} buffer={buffer} onBufferChange={setBuffer} />
+      <AudioMappingPanel activeRoute={activeRoute} route={activeRouteState} inputOptions={activeInputOptions} outputOptions={activeOutputOptions} nativeBridgeAvailable={!!bridge} nativeReady={nativeReady} audioRunning={audioRunning} onInputChange={(key) => updateActiveRouteChannel('input', key)} onOutputChange={(key) => updateActiveRouteChannel('output', key)} sharedDescription={sharedCompatibilityKey && sharedInputOption ? `${backendLabel(sharedInputOption.deviceType)} · ${sharedInputOption.interfaceName}` : mappingCompatibilityKey ? 'Other routes limited to the selected interface' : !bridge ? 'Open the Windows desktop app to access native audio devices' : inputOptions.length && outputOptions.length ? 'Choose an input and output on a route to lock the shared clock' : devicesReported ? 'Windows reported no input/output endpoints for the compiled audio backends' : 'Waiting for native interface discovery'} buffer={buffer} onBufferChange={setBuffer} />
       <section className="panel routing-panel">
         <div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> mono routing</div><h3 className="section-title">Four simultaneous routes</h3><p className="section-note">Choose a route to edit its mapping above. The first selected interface limits every other route so all armed paths share one hardware clock.</p></div></div>
         <div className="route-grid">{routes.map((route) => { const routeInfo = telemetry.routeTelemetry?.find((item) => item.route === route.id); const calibrated = routeInfo?.calibrated || Boolean(calibrations[route.id]); const selection = routeSelection(route); return <div className={`route-card ${route.id === activeRoute + 1 ? 'selected' : ''} ${route.enabled ? '' : 'muted'}`} key={route.id}><button type="button" className="route-card-top" disabled={!nativeReady} onClick={() => setActiveRoute(route.id - 1)} aria-pressed={route.id === activeRoute + 1}><span className={`route-dot ${route.enabled ? 'locked' : ''}`} /><span className="channel">ROUTE {route.id}</span><span className="route-select-label">{route.id === activeRoute + 1 ? 'viewing' : 'select'}</span></button><div className="route-name">Route {route.id} mono bus pair</div><RouteMappingSummary input={selection.input} output={selection.output} /><div className="route-meta"><span>{route.enabled ? 'armed path' : 'standby'}</span><label className="route-arm"><input type="checkbox" checked={route.enabled} disabled={audioRunning || !nativeReady} onChange={() => setRoutes((items) => items.map((item) => item.id === route.id ? { ...item, enabled: !item.enabled } : item))} /><span>arm</span></label></div><div className="route-card-bottom"><span>{route.enabled ? 'processing' : 'disabled'}</span><span>{calibrated ? 'baseline saved' : 'needs calibration'}</span></div></div>; })}</div>

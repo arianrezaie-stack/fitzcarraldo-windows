@@ -9,7 +9,7 @@ FetchContent_Declare(JUCE
 FetchContent_MakeAvailable(JUCE)
 
 option(WERFEED_ENABLE_ASIO "Enable ASIO support with a locally supplied Steinberg ASIO SDK" OFF)
-set(WERFEED_ASIO_SDK_PATH "" CACHE PATH "Path to the ASIO SDK root (contains common/asio.h)")
+set(WERFEED_ASIO_SDK_PATH "$ENV{ASIO_SDK_PATH}" CACHE PATH "Path to the ASIO SDK root (contains common/asio.h)")
 
 add_executable(werfeed-native src/main.cpp)
 set_target_properties(werfeed-native PROPERTIES OUTPUT_NAME "werfeed-engine")

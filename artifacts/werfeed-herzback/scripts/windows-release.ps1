@@ -1,5 +1,5 @@
 param(
-    [string]$AsioSdkPath = "",
+    [string]$AsioSdkPath = $env:ASIO_SDK_PATH,
     [ValidateSet("x64")]
     [string]$Architecture = "x64"
 )
@@ -13,7 +13,10 @@ $EngineRoot = Join-Path $AppRoot "native-engine"
 $BuildRoot = Join-Path $EngineRoot "build-windows"
 $EvidenceRoot = Join-Path $AppRoot "windows-validation-output"
 $StagingRoot = Join-Path $AppRoot "engine\win32-x64"
-$BuildMode = if ($AsioSdkPath) { "asio" } else { "multi-backend" }
+$BundledAsioSdkPath = Join-Path $EngineRoot "third_party\asiosdk"
+$AsioSdkUrl = "https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip"
+$AsioSdkSha256 = "BC425D9B98701AF74B43639798566C48BC005AF7328A2251CFF722C1885076B2"
+$BuildMode = "asio"
 $TranscriptPath = Join-Path $EvidenceRoot "build-transcript-$BuildMode.txt"
 $EnumerationPath = Join-Path $EvidenceRoot "device-enumeration-$BuildMode.jsonl"
 $NativeLogPath = Join-Path $EvidenceRoot "native-commands-$BuildMode.log"
@@ -62,6 +65,31 @@ try {
     cmake --version
     pnpm --version
 
+    $Phase = "ASIO SDK preparation"
+    if (-not $AsioSdkPath) {
+        $AsioSdkPath = $BundledAsioSdkPath
+    }
+    if (-not (Test-Path (Join-Path $AsioSdkPath "common\asio.h"))) {
+        Write-Host "Downloading the official Steinberg ASIO SDK for this licensed ASIO build..."
+        $TemporaryRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
+        $AsioArchive = Join-Path $TemporaryRoot "werfeed-asiosdk.zip"
+        $AsioExtractRoot = Join-Path $TemporaryRoot "werfeed-asiosdk"
+        Invoke-WebRequest -Uri $AsioSdkUrl -OutFile $AsioArchive
+        $DownloadedHash = (Get-FileHash -Algorithm SHA256 $AsioArchive).Hash
+        if ($DownloadedHash -ne $AsioSdkSha256) {
+            throw "ASIO SDK checksum mismatch. Expected $AsioSdkSha256, received $DownloadedHash."
+        }
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $AsioExtractRoot
+        Expand-Archive -Path $AsioArchive -DestinationPath $AsioExtractRoot
+        $ExtractedSdk = Get-ChildItem -Path $AsioExtractRoot -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName "common\asio.h") } |
+            Select-Object -First 1
+        if (-not $ExtractedSdk) {
+            throw "The official ASIO SDK archive did not contain common\asio.h."
+        }
+        $AsioSdkPath = $ExtractedSdk.FullName
+    }
+
     $CmakeArguments = @(
         "-S", $EngineRoot,
         "-B", $BuildRoot,
@@ -69,14 +97,12 @@ try {
         "-A", $Architecture,
         "-DBUILD_TESTING=ON"
     )
-    if ($AsioSdkPath) {
-        $AsioHeader = Join-Path $AsioSdkPath "common\asio.h"
-        if (-not (Test-Path $AsioHeader)) {
-            throw "ASIO SDK is invalid: expected $AsioHeader"
-        }
-        $CmakeArguments += "-DWERFEED_ENABLE_ASIO=ON"
-        $CmakeArguments += "-DWERFEED_ASIO_SDK_PATH=$AsioSdkPath"
+    $AsioHeader = Join-Path $AsioSdkPath "common\asio.h"
+    if (-not (Test-Path $AsioHeader)) {
+        throw "ASIO SDK is invalid: expected $AsioHeader"
     }
+    $CmakeArguments += "-DWERFEED_ENABLE_ASIO=ON"
+    $CmakeArguments += "-DWERFEED_ASIO_SDK_PATH=$AsioSdkPath"
 
     $Phase = "native engine configuration"
     Write-Host "Configuring and building the native engine..."
@@ -171,6 +197,8 @@ try {
         portableSha256 = $PortableHash
         engineArtifact = "werfeed-engine.exe"
         engineSha256 = $EngineHash
+        asioEnabled = $true
+        asioSdkVersion = "2.3.3"
         rendererDevicePairs = [int]$RendererDevices.pairCount
         hardwareAvailable = ([int]$RendererDevices.pairCount -gt 0)
         validationEvidence = (Split-Path -Leaf $PortableValidationPath)
