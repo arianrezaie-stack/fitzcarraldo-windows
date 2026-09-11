@@ -154,6 +154,58 @@ int main() {
     REQUIRE(std::abs(werfeed::notchQuality(1000.0f) - 14.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::notchQuality(4000.0f) - 20.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::notchQuality(10000.0f) - 30.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::notchQualityForPreset(
+        500.0f, werfeed::ProtectionPreset::speech) - 11.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::notchQualityForPreset(
+        500.0f, werfeed::ProtectionPreset::music) - 10.12f) < 0.01f);
+    REQUIRE(werfeed::notchQualityForCalibrationHotspot(
+        500.0f, werfeed::ProtectionPreset::speech, true) <
+        werfeed::notchQualityForPreset(500.0f, werfeed::ProtectionPreset::speech));
+    REQUIRE(std::abs(werfeed::notchQualityForCalibrationHotspot(
+        1000.0f, werfeed::ProtectionPreset::speech, true) -
+        werfeed::notchQualityForPreset(1000.0f, werfeed::ProtectionPreset::speech)) < 0.01f);
+    REQUIRE(std::abs(werfeed::probeDepthFraction(299.0f) - 0.5f) < 0.001f);
+    REQUIRE(std::abs(werfeed::probeDepthFraction(300.0f) - 0.75f) < 0.001f);
+    REQUIRE(std::abs(werfeed::probeDepthFraction(800.0f) - 0.75f) < 0.001f);
+    REQUIRE(std::abs(werfeed::probeDepthFraction(801.0f) - 0.5f) < 0.001f);
+
+    auto separatedControls = std::make_unique<werfeed::FeedbackProcessor>();
+    separatedControls->prepare(rate);
+    separatedControls->setDepthAmount(0.4f);
+    separatedControls->setSensitivityAmount(0.9f);
+    const auto separatedSnapshot = separatedControls->snapshot();
+    REQUIRE(std::abs(separatedSnapshot.depthAmount - 0.4f) < 0.001f);
+    REQUIRE(std::abs(separatedSnapshot.sensitivityAmount - 0.9f) < 0.001f);
+
+    auto immediateHotspot = std::make_unique<werfeed::FeedbackProcessor>();
+    immediateHotspot->prepare(rate);
+    immediateHotspot->setEnabled(true);
+    immediateHotspot->setSuppressionAmount(1.0f);
+    std::array<float, werfeed::analyzerBins> immediateHotspotResponse {};
+    immediateHotspotResponse.fill(0.0f);
+    constexpr std::size_t immediateHotspotBin = 120;
+    const auto immediateHotspotFrequency = static_cast<float>(
+        20.0 * std::pow(1000.0,
+            static_cast<double>(immediateHotspotBin) /
+            static_cast<double>(werfeed::analyzerBins - 1)));
+    immediateHotspotResponse[immediateHotspotBin] = 12.0f;
+    immediateHotspot->setCalibrationProfile(immediateHotspotResponse);
+    for (int i = 0; i < 96000; ++i)
+        processSample(*immediateHotspot, 0.3f * std::sin(
+            2.0f * werfeed::pi * immediateHotspotFrequency * i / 48000.0f));
+    const auto immediateHotspotSnapshot = immediateHotspot->snapshot();
+    const auto immediateHotspotNotch = *std::min_element(
+        immediateHotspotSnapshot.notches.begin(), immediateHotspotSnapshot.notches.end(),
+        [immediateHotspotFrequency](const werfeed::NotchSnapshot& a,
+                                    const werfeed::NotchSnapshot& b) {
+            const auto aDistance = a.active
+                ? std::abs(std::log2(a.frequency / immediateHotspotFrequency)) : 1000.0f;
+            const auto bDistance = b.active
+                ? std::abs(std::log2(b.frequency / immediateHotspotFrequency)) : 1000.0f;
+            return aDistance < bDistance;
+        });
+    REQUIRE(immediateHotspotNotch.active);
+    REQUIRE(immediateHotspotNotch.depthDb < -24.0f);
 
     auto ordinaryTone = std::make_unique<werfeed::FeedbackProcessor>();
     ordinaryTone->prepare(rate);
@@ -181,7 +233,7 @@ int main() {
     const auto snapshot = confirmedFeedback->snapshot();
     REQUIRE(snapshot.activeNotches > 0);
     REQUIRE(snapshot.activeNotches <= static_cast<int>(werfeed::maxNotches));
-    REQUIRE(snapshot.maximumCutDb >= -32.1f && snapshot.maximumCutDb <= -31.4f);
+    REQUIRE(snapshot.maximumCutDb >= -38.5f && snapshot.maximumCutDb <= -37.8f);
     const auto active = *std::min_element(snapshot.notches.begin(), snapshot.notches.end(),
         [](const werfeed::NotchSnapshot& a, const werfeed::NotchSnapshot& b) {
             const auto aDistance = a.active ? std::abs(std::log2(a.frequency / 1000.0f)) : 1000.0f;
@@ -233,7 +285,7 @@ int main() {
         processConfirmedTone(*releaseTone, frequency, 0.3f, 14000);
         const auto releaseSnapshot = releaseTone->snapshot();
         REQUIRE(releaseSnapshot.activeNotches == 1);
-        REQUIRE(releaseSnapshot.maximumCutDb <= -31.4f);
+        REQUIRE(releaseSnapshot.maximumCutDb <= -37.8f);
         REQUIRE(std::any_of(releaseSnapshot.notches.begin(), releaseSnapshot.notches.end(),
             [frequency](const werfeed::NotchSnapshot& notch) {
                 return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.02f
@@ -304,6 +356,17 @@ int main() {
     REQUIRE(werfeed::persistentNotchLimit(8, 0.0f) == 0);
     REQUIRE(werfeed::persistentNotchLimit(8, 0.5f) == 2);
     REQUIRE(werfeed::persistentNotchLimit(8, 1.0f) == 5);
+    REQUIRE(werfeed::maximumSuppressionDepth(1.0f) >= -38.5f &&
+            werfeed::maximumSuppressionDepth(1.0f) <= -37.8f);
+    REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(0.0f) - 6.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(1.0f) - (-40.0f)) < 0.01f);
+    REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.79f) == 420);
+    REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.8f) == 480);
+    REQUIRE(werfeed::persistentRecurrenceWindowFrames(1.0f) == 520);
+    REQUIRE(werfeed::persistentRecurrenceRequirement(0.79f) == 6);
+    REQUIRE(werfeed::persistentRecurrenceRequirement(0.8f) == 3);
+    REQUIRE(werfeed::persistentMinimumProbeDepthDb(0.79f) == 12.0f);
+    REQUIRE(werfeed::persistentMinimumProbeDepthDb(0.8f) == 10.0f);
 
     // A calibrated resonance remains protected longer than an ordinary tone.
     constexpr float hotspotFrequency = 1000.0f;
@@ -325,6 +388,30 @@ int main() {
     for (int i = 0; i < 600000; ++i) processSample(*calibratedHotspot, 0.0f);
     REQUIRE(calibratedHotspot->snapshot().activeNotches == 0);
 
+    // A held hotspot stays latched while the latch is open, but moving the
+    // latch to zero releases it promptly when the feedback is no longer present.
+    auto releasableHeldHotspot = std::make_unique<werfeed::FeedbackProcessor>();
+    releasableHeldHotspot->prepare(rate);
+    releasableHeldHotspot->setCalibrationProfile(hotspotResponse);
+    releasableHeldHotspot->setEnabled(true);
+    releasableHeldHotspot->setSuppressionAmount(1.0f);
+    releasableHeldHotspot->setTimingAmount(0.0f);
+    releasableHeldHotspot->setLatchAmount(1.0f);
+    for (int burst = 0; burst < 6; ++burst) {
+        for (int i = 0; i < 12000; ++i)
+            processSample(*releasableHeldHotspot, 0.04f * std::sin(
+                2.0f * werfeed::pi * hotspotFrequency * i / 48000.0f));
+        for (int i = 0; i < 3000; ++i)
+            processSample(*releasableHeldHotspot, 0.0f);
+    }
+    for (int i = 0; i < 24000; ++i)
+        processSample(*releasableHeldHotspot, 0.0f);
+    REQUIRE(releasableHeldHotspot->snapshot().activeNotches > 0);
+    releasableHeldHotspot->setLatchAmount(0.0f);
+    for (int i = 0; i < 240000; ++i)
+        processSample(*releasableHeldHotspot, 0.0f);
+    REQUIRE(releasableHeldHotspot->snapshot().activeNotches == 0);
+
     // Automatic persistence requires a measured hotspot. Repeating an
     // uncalibrated tone must still release even when the latch is wide open.
     auto uncalibratedRepeat = std::make_unique<werfeed::FeedbackProcessor>();
@@ -337,13 +424,13 @@ int main() {
     for (int i = 0; i < 960000; ++i) processSample(*uncalibratedRepeat, 0.0f);
     REQUIRE(uncalibratedRepeat->snapshot().activeNotches == 0);
 
-    // Repeated ordinary bursts still require the two-stage feedback
-    // confirmation; recurrence alone must not make them persistent.
+    // Repeated shallow bursts still require a deep intervention before they
+    // can become persistent, even when recurrence and latch capacity qualify.
     auto calibratedRepeat = std::make_unique<werfeed::FeedbackProcessor>();
     calibratedRepeat->prepare(rate);
     calibratedRepeat->setCalibrationProfile(hotspotResponse);
     calibratedRepeat->setEnabled(true);
-    calibratedRepeat->setSuppressionAmount(1.0f);
+    calibratedRepeat->setSuppressionAmount(0.7f);
     calibratedRepeat->setTimingAmount(0.0f);
     calibratedRepeat->setLatchAmount(1.0f);
     for (int burst = 0; burst < 4; ++burst) {

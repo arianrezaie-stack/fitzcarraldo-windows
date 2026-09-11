@@ -14,3 +14,9 @@ Music mode should require a longer qualifying-peak persistence before starting t
 **Why:** Music contains more sustained tonal material that can resemble a feedback peak; delaying the first intervention reduces audible false positives without slowing speech protection.
 
 **How to apply:** Tune the pre-probe candidate persistence by preset, not the confirmation response or full-depth suppression path. Keep Speech at its fast path when changing Music thresholds.
+
+In this project, “hotspot peak” means a frequency peak identified from a route’s completed calibration measurement as high-amplitude relative to that route’s flat/reference baseline; it does not mean a fixed frequency range or any generic live FFT peak.
+
+**Why:** Calibration-specific protection can safely bypass probing only for resonances already established by that route’s measurement, while ordinary live peaks still need raw-source confirmation.
+
+**How to apply:** Use the route’s persisted calibration response and derived peak bias to classify hotspots. Keep the classification route-local and frequency-data-driven.

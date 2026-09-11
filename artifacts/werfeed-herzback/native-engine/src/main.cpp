@@ -53,7 +53,8 @@ juce::var getPropertyOr(const juce::DynamicObject& object, const char* name, juc
 class Engine final : public juce::AudioIODeviceCallback {
 public:
     Engine() {
-        routeSuppression.fill(0.75f);
+        routeDepth.fill(0.75f);
+        routeSensitivity.fill(0.75f);
         routeTiming.fill(0.5f);
         routeLatch.fill(0.5f);
         calibrationFile = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
@@ -172,19 +173,27 @@ public:
         const auto hasPreset = command.hasProperty("preset");
         const auto hasRoute = command.hasProperty("route");
         const auto hasSuppression = command.hasProperty("suppression");
+        const auto hasDepth = command.hasProperty("depth");
+        const auto hasSensitivity = command.hasProperty("sensitivity");
         const auto hasTiming = command.hasProperty("timing");
         const auto hasLatch = command.hasProperty("latch");
         const auto route = static_cast<int>(getPropertyOr(command, "route", -1));
-        if (hasSuppression || hasTiming || hasLatch) {
+        if (hasSuppression || hasDepth || hasSensitivity || hasTiming || hasLatch) {
             if (route < 0 || route >= routeCount) {
-                error("suppression route is invalid"); return;
+                error("protection route is invalid"); return;
             }
             auto& processor = processors[static_cast<std::size_t>(route)];
-            if (hasSuppression) {
+            if (hasDepth || hasSuppression) {
                 const auto amount = static_cast<float>(static_cast<double>(
-                    getPropertyOr(command, "suppression", 0.75)));
-                routeSuppression[static_cast<std::size_t>(route)] = amount;
-                processor.setSuppressionAmount(amount);
+                    getPropertyOr(command, hasDepth ? "depth" : "suppression", 0.75)));
+                routeDepth[static_cast<std::size_t>(route)] = amount;
+                processor.setDepthAmount(amount);
+            }
+            if (hasSensitivity) {
+                const auto amount = static_cast<float>(static_cast<double>(
+                    getPropertyOr(command, "sensitivity", 0.75)));
+                routeSensitivity[static_cast<std::size_t>(route)] = amount;
+                processor.setSensitivityAmount(amount);
             }
             if (hasTiming) {
                 const auto timing = static_cast<float>(static_cast<double>(
@@ -593,7 +602,9 @@ public:
                 routeEnabled[static_cast<std::size_t>(routeIndex)].load(std::memory_order_acquire) &&
                 routes[static_cast<std::size_t>(routeIndex)].input >= 0 &&
                 routes[static_cast<std::size_t>(routeIndex)].output >= 0);
-            routeObject->setProperty("suppression", snapshot.suppressionAmount);
+             routeObject->setProperty("depth", snapshot.depthAmount);
+             routeObject->setProperty("sensitivity", snapshot.sensitivityAmount);
+             routeObject->setProperty("suppression", snapshot.suppressionAmount);
              routeObject->setProperty("timing", snapshot.timingAmount);
              routeObject->setProperty("latch", snapshot.latchAmount);
             routeObject->setProperty("activeNotches", snapshot.activeNotches);
@@ -730,7 +741,8 @@ private:
             auto& processor = processors[static_cast<std::size_t>(routeIndex)];
             processor.prepare(device->getCurrentSampleRate());
             processor.setNotchCapacity(notchCapacityForRoute(routeIndex));
-            processor.setSuppressionAmount(routeSuppression[static_cast<std::size_t>(routeIndex)]);
+            processor.setDepthAmount(routeDepth[static_cast<std::size_t>(routeIndex)]);
+            processor.setSensitivityAmount(routeSensitivity[static_cast<std::size_t>(routeIndex)]);
             processor.setTimingAmount(routeTiming[static_cast<std::size_t>(routeIndex)]);
             processor.setLatchAmount(routeLatch[static_cast<std::size_t>(routeIndex)]);
             processor.setPreset(protectionPreset.load(std::memory_order_relaxed));
@@ -915,8 +927,10 @@ private:
                 outputChannel
             };
             routeEnabled[static_cast<size_t>(i)].store(enabled, std::memory_order_release);
-            routeSuppression[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(
-                getPropertyOr(*r, "suppression", 0.75)));
+            routeDepth[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(
+                getPropertyOr(*r, "depth", getPropertyOr(*r, "suppression", 0.75))));
+            routeSensitivity[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(
+                getPropertyOr(*r, "sensitivity", 0.75)));
             routeTiming[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(
                 getPropertyOr(*r, "timing", 0.5)));
             routeLatch[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(
@@ -927,7 +941,8 @@ private:
     juce::AudioDeviceManager manager;
     std::array<werfeed::Route, werfeed::maxRoutes> routes {};
     std::array<std::atomic_bool, werfeed::maxRoutes> routeEnabled {};
-    std::array<float, werfeed::maxRoutes> routeSuppression {};
+    std::array<float, werfeed::maxRoutes> routeDepth {};
+    std::array<float, werfeed::maxRoutes> routeSensitivity {};
     std::array<float, werfeed::maxRoutes> routeTiming {};
     std::array<float, werfeed::maxRoutes> routeLatch {};
     std::array<werfeed::FeedbackProcessor, werfeed::maxRoutes> processors {};

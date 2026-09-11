@@ -107,13 +107,15 @@ exact same physical input/output device pair and backend. Configure before
 start, for example:
 
 ```json
-{"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":4,"outputChannels":4,"routes":[{"input":0,"output":0,"enabled":true,"suppression":0.75},{"input":1,"output":1,"enabled":true,"suppression":0.75},{"input":2,"output":2,"enabled":true,"suppression":0.75},{"input":3,"output":3,"enabled":true,"suppression":0.75}]}
+{"type":"configure","deviceType":"Windows Audio (Exclusive Mode)","inputDevice":"Input","outputDevice":"Output","sampleRate":48000,"bufferSize":128,"inputChannels":4,"outputChannels":4,"routes":[{"input":0,"output":0,"enabled":true,"depth":0.75,"sensitivity":0.75},{"input":1,"output":1,"enabled":true,"depth":0.75,"sensitivity":0.75},{"input":2,"output":2,"enabled":true,"depth":0.75,"sensitivity":0.75},{"input":3,"output":3,"enabled":true,"depth":0.75,"sensitivity":0.75}]}
 ```
 
 Commands are `list_devices`, `configure`, `start`, `stop`, `set_protection`,
 `start_calibration`, and the validation-only `test_marker`. Protection accepts
-`enabled` and a `speech` or `music` preset. A route-specific suppression amount
-is set with `{"route":0,"suppression":0.75}` and remains in the range 0–1.
+`enabled` and a `speech` or `music` preset. A route-specific cut depth is set
+with `{"route":0,"depth":0.75}`, while detector sensitivity is set with
+`{"route":0,"sensitivity":0.75}`; both remain in the range 0–1. Higher
+sensitivity lowers the feedback detection threshold and admits quieter candidates.
 Calibration accepts a zero-based route and a safe normalized level no higher
 than 0.08. The Electron desktop bridge adds the bundled
 `calibration-announcement.mp3` path to this command. The native engine plays
@@ -150,14 +152,25 @@ Calibration emits a bounded impulse followed by a two-second 20 Hz–20 kHz
 logarithmic sweep, finds loop delay with normalized cross-correlation, and
 persists the sweep-reference 256-bin response per device route under the user's
 application-data directory. Telemetry exposes `routeTelemetry` for every
-configured route, including its live spectrum, active notches, suppression
-amount, calibration response, and measured delay. The detector uses the
+configured route, including its live spectrum, active notches, cut depth,
+detector sensitivity, calibration response, and measured delay. The detector uses the
 calibration response as a priority baseline, a fast stable/rising-peak speech
 gate, a more conservative music gate, and at most six smoothly-ramped notch
 filters. Analyzer updates use overlapping 2048-sample FFT windows with 256
-display bins. The route suppression amount scales the maximum cut from 0 to
--12 dB in both protection modes. Below 300 Hz, notch Q decreases progressively
-to widen the protection band for low-frequency room feedback.
+display bins. The route depth amount reaches -14 dB at 70%, -24 dB at
+80%, and approximately -38.4 dB at 100%. Below 300 Hz, notch Q decreases progressively
+to widen the protection band for low-frequency room feedback. Feedback probes
+between 300 Hz and 800 Hz initially apply 75% of the slider-defined maximum
+cut instead of the normal 50% probe cut, while confirmed protection remains
+limited by the same slider-defined maximum. Automatically engaged Music-mode
+notches use an 8% lower Q than Speech-mode notches for a slightly wider band;
+manual notches retain their existing Q. Automatic persistent holds require six
+same-frequency recurrence confirmations within roughly 2.2 seconds and an
+initial probe of at least 12 dB; latch values at or above 80% relax that to
+three confirmations, roughly 2.6–2.8 seconds, and a 10 dB initial probe.
+At 0% latch, held automatic notches are released on the fastest path when the
+current detector no longer sees a qualifying feedback peak; explicit manual
+notches remain held until cleared.
 
 `xruns` remains a backwards-compatible alias for callback deadline misses.
 `driverXruns` is the JUCE/backend-reported xrun count and may not be available
