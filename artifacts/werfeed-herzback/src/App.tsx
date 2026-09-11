@@ -25,6 +25,24 @@ type RecurringCutAlert = { route: number; frequency: number };
 const recurringCutWindowMs = 10_000;
 const recurringCutThreshold = 6;
 const sameCutFrequency = (left: number, right: number) => Math.abs(Math.log2(left / right)) < 0.08;
+const calibrationPeakProminenceDb = 3;
+const calibrationHasPeakAtFrequency = (responseDb: number[] | undefined, frequency: number) => {
+  if (!responseDb || responseDb.length < 5 || !Number.isFinite(frequency) || frequency <= 0) return false;
+  const sorted = [...responseDb].sort((left, right) => left - right);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const position = Math.max(0, Math.min(1, Math.log10(frequency / 20) / Math.log10(1000)));
+  const center = Math.round(position * (responseDb.length - 1));
+  const start = Math.max(1, center - 2);
+  const end = Math.min(responseDb.length - 2, center + 2);
+  let peakIndex = start;
+  for (let index = start + 1; index <= end; index += 1) {
+    if (responseDb[index] > responseDb[peakIndex]) peakIndex = index;
+  }
+  const peak = responseDb[peakIndex];
+  return peak - median >= calibrationPeakProminenceDb
+    && peak >= responseDb[peakIndex - 1]
+    && peak >= responseDb[peakIndex + 1];
+};
 const backendLabel = (deviceType: string) => {
   const normalized = deviceType.toLowerCase();
   if (normalized.includes('exclusive')) return 'WASAPI Exclusive';
@@ -536,7 +554,9 @@ function Home() {
 
       if (recurringCutAlertRef.current) return;
       const firstQualifyingEvent = recentEvents.find((event) =>
-        recentEvents.filter((candidate) => sameCutFrequency(candidate.frequency, event.frequency)).length >= recurringCutThreshold);
+        recentEvents.filter((candidate) => sameCutFrequency(candidate.frequency, event.frequency)).length >= recurringCutThreshold
+        && snapshot.calibrated === true
+        && calibrationHasPeakAtFrequency(snapshot.calibrationResponseDb, event.frequency));
       if (firstQualifyingEvent) {
         const alert = { route: snapshot.route, frequency: firstQualifyingEvent.frequency };
         recurringCutAlertRef.current = alert;
