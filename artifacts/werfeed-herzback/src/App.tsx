@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, SlidersHorizontal, Timer, Volume2, Waves, X, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, RotateCcw, SlidersHorizontal, Timer, Volume2, Waves, X, Zap } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -323,13 +323,25 @@ function Home() {
            .catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to arm protection after calibration'));
         showToast(`Route ${route || '—'} calibration saved · ${Number(payload.delayMs ?? 0).toFixed(1)} ms measured delay`);
       }
+      if (payload.type === 'calibration_reset') {
+        const route = Number(payload.route ?? 0);
+        if (route > 0) {
+          setCalibrations((current) => {
+            const next = { ...current };
+            delete next[route];
+            return next;
+          });
+          if (route === activeRoute + 1) setShowCalibration(false);
+          showToast(`Route ${route} calibration reset · ready for a new measurement`);
+        }
+      }
       if (payload.type === 'error') showToast(String(payload.message ?? 'Native engine error'));
     };
     const removeStatus = bridge.onStatus((status) => setEngineStatus(status));
     const removeEvent = bridge.onEvent(handleEvent);
     void bridge.getStatus().then(setEngineStatus).catch((error: unknown) => setEngineStatus({ state: 'unavailable', reason: error instanceof Error ? error.message : 'Unable to read native engine status' }));
     return () => { removeStatus(); removeEvent(); };
-  }, [bridge, pendingStart]);
+   }, [bridge, pendingStart, activeRoute]);
 
   useEffect(() => {
     if (!bridge || engineStatus.state !== 'running') return;
@@ -501,6 +513,13 @@ function Home() {
     }
     startCalibration(activeRoute);
   };
+  const resetCalibration = () => {
+    if (!bridge || !nativeReady || !activeCalibration || telemetry.calibrating) return;
+    const accepted = window.confirm(`Clear the saved calibration for Route ${activeRoute + 1}? You can measure this route again afterward.`);
+    if (!accepted) return;
+    void bridge.command('reset_calibration', { route: activeRoute })
+      .catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to reset calibration'));
+  };
   const value = (number: number | undefined, digits = 1) => number === undefined ? '—' : number.toFixed(digits);
   const peakPercent = (peak: number | undefined) => peak === undefined ? undefined : peak * 100;
   const activeInputOptions = scopedOptions(inputOptions, activeRouteState);
@@ -524,7 +543,7 @@ function Home() {
       </section>
       <section className="panel calibration-panel">
         <div className="panel-heading"><div><div className="section-kicker"><BarChart3 size={14} /> calibration</div><h3 className="section-title">Measure one route at a time</h3><p className="section-note">Calibration plays the safety announcement, one second of silence, then the impulse and logarithmic sweep on the selected route.</p></div><Badge tone={telemetry.calibrating ? 'amber' : 'quiet'}>{telemetry.calibrating ? 'sweep in progress' : activeCalibration ? 'baseline saved' : 'ready when audio is mapped'}</Badge></div>
-         <div className="calibration-controls"><label className="mapping-field"><span>Calibration route</span><select value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))}>{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}{!route.enabled ? ' · standby' : ''}</option>)}</select></label><button type="button" className="plain-button footer-bypass" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteMapped} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : !activeRouteState.enabled ? `Arm & calibrate Route ${activeRoute + 1}` : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button></div>
+         <div className="calibration-controls"><label className="mapping-field"><span>Calibration route</span><select value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))}>{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}{!route.enabled ? ' · standby' : ''}</option>)}</select></label><button type="button" className="plain-button footer-bypass" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteMapped} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : !activeRouteState.enabled ? `Arm & calibrate Route ${activeRoute + 1}` : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="plain-button calibration-reset-button" disabled={!nativeReady || !activeCalibration || telemetry.calibrating} onClick={resetCalibration}><RotateCcw size={14} /> Reset Route {activeRoute + 1}</button><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button></div>
       </section>
       <section className="route-focus-stack">
         <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector stays baseline-relative and calibration-weighted while the engine runs bypassed or armed.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / 6 cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} /></section>

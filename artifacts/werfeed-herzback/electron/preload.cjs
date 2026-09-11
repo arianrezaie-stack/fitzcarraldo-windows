@@ -7,6 +7,7 @@ const COMMANDS = new Set([
   'stop',
   'set_protection',
   'start_calibration',
+   'reset_calibration',
 ]);
 
 function isPlainObject(value) {

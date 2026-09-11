@@ -183,6 +183,12 @@ public:
         if (calibrationBusy.exchange(true)) { error("calibration is already running or finalizing"); return; }
         const auto route = static_cast<int>(getPropertyOr(command, "route", 0));
         if (route < 0 || route >= routeCount) { calibrationBusy.store(false); error("calibration route is invalid"); return; }
+        const auto mappedRoute = routes[static_cast<std::size_t>(route)];
+        if (mappedRoute.input < 0 || mappedRoute.output < 0) {
+            calibrationBusy.store(false);
+            error("calibration route must have a mapped mono input and output");
+            return;
+        }
         const auto level = static_cast<float>(static_cast<double>(getPropertyOr(command, "level", 0.06)));
         if (!(level > 0.0f && level <= 0.08f)) { calibrationBusy.store(false); error("calibration level must be above 0 and at most 0.08"); return; }
         const auto rate = sampleRate.load();
@@ -216,6 +222,33 @@ public:
         calibrationComplete.store(false);
         calibrating.store(true, std::memory_order_release);
         emitState("calibrating");
+    }
+
+    void resetCalibration(const juce::DynamicObject& command) {
+        const std::lock_guard<std::mutex> controlGuard(controlMutex);
+        if (calibrationBusy.load()) { error("wait for calibration finalization before resetting a baseline"); return; }
+        const auto route = static_cast<int>(getPropertyOr(command, "route", 0));
+        if (route < 0 || route >= routeCount) { error("calibration route is invalid"); return; }
+        const auto calibrationKey = keyForRoute(route);
+        const auto previous = baselines.find(calibrationKey);
+        const auto hadPrevious = previous != baselines.end();
+        const auto previousBaseline = hadPrevious ? previous->second : Baseline {};
+        baselines.erase(calibrationKey);
+        processors[static_cast<std::size_t>(route)].clearBaseline();
+        if (!saveCalibrations()) {
+            if (hadPrevious) {
+                baselines[calibrationKey] = previousBaseline;
+                processors[static_cast<std::size_t>(route)].setCalibrationProfile(previousBaseline.responseDb);
+            }
+            error("calibration reset could not be persisted");
+            return;
+        }
+        auto* o = new juce::DynamicObject();
+        o->setProperty("type", "calibration_reset");
+        o->setProperty("route", route + 1);
+        o->setProperty("routeKey", calibrationKey);
+        emit(juce::var(o));
+        emitState("calibration_reset");
     }
 
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override {
@@ -730,6 +763,7 @@ int main() {
         else if (name == "stop") engine.stop();
         else if (name == "set_protection") engine.setProtection(*object);
         else if (name == "start_calibration") engine.startCalibration(*object);
+        else if (name == "reset_calibration") engine.resetCalibration(*object);
         else if (name == "test_marker") engine.emitTestMarker(*object);
         else error("unknown command");
     }
