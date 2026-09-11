@@ -183,6 +183,27 @@ foreach ($Preset in @("speech", "music")) {
     $MaximumXruns = if ($Telemetry.Count -gt 0) {
         ($Telemetry | Measure-Object -Property xruns -Maximum).Maximum
     } else { $null }
+    $MaximumDriverXruns = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property driverXruns -Maximum).Maximum
+    } else { $null }
+    $MaximumDeadlineMisses = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackDeadlineMisses -Maximum).Maximum
+    } else { $null }
+    $MaximumExecutionMs = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackExecutionMs -Maximum).Maximum
+    } else { $null }
+    $MaximumExecutionPeakMs = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackExecutionPeakMs -Maximum).Maximum
+    } else { $null }
+    $MaximumJitterMs = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackJitterMs -Maximum).Maximum
+    } else { $null }
+    $MaximumJitterPeakMs = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackJitterPeakMs -Maximum).Maximum
+    } else { $null }
+    $MaximumNonFiniteInput = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property nonFiniteInputSamples -Maximum).Maximum
+    } else { $null }
     $MaximumNonFiniteOutput = if ($Telemetry.Count -gt 0) {
         ($Telemetry | Measure-Object -Property nonFiniteOutputSamples -Maximum).Maximum
     } else { $null }
@@ -210,6 +231,9 @@ foreach ($Preset in @("speech", "music")) {
         $MaximumActiveNotches -ge 2 -and
         $MaximumActiveNotches -le 6 -and
         $TelemetryReleaseObserved -and
+        $MaximumDriverXruns -eq 0 -and
+        $MaximumDeadlineMisses -eq 0 -and
+        $MaximumNonFiniteInput -eq 0 -and
         $DeepestCut -ge $CutLimit
 
     Write-Host ""
@@ -217,11 +241,17 @@ foreach ($Preset in @("speech", "music")) {
     $ReleaseObserved = Read-Host "[$Preset] Did both notches release gradually after source removal without rapid chatter? (yes/no)"
     $ChatterObserved = Read-Host "[$Preset] Was rapid on/off chatter observed? (yes/no)"
     $AudibleDiscontinuity = Read-Host "[$Preset] Any audible click, discontinuity, unsafe output, or missed deadline? (yes/no)"
+    $TransparentProgram = Read-Host "[$Preset] Did the clean program-only phase remain transparent without feedback suppression? (yes/no)"
+    $FrequencyTracked = Read-Host "[$Preset] Did each reported notch stay centered on its injected feedback tone rather than the program material? (yes/no)"
+    $DepthRampObserved = Read-Host "[$Preset] Did each notch ramp into depth without a step or click before release? (yes/no)"
     $ToneFrequencies = Read-Host "[$Preset] Approximate one-tone and two-tone frequencies in Hz"
     $CutDepthNotes = Read-Host "[$Preset] Tester notes on achieved cut depth and audible behavior"
     $ManualPass = $ReleaseObserved -match '^(?i:yes)$' -and
         $ChatterObserved -match '^(?i:no)$' -and
-        $AudibleDiscontinuity -match '^(?i:no)$'
+        $AudibleDiscontinuity -match '^(?i:no)$' -and
+        $TransparentProgram -match '^(?i:yes)$' -and
+        $FrequencyTracked -match '^(?i:yes)$' -and
+        $DepthRampObserved -match '^(?i:yes)$'
     $Result = if ($AutomatedPass -and $ManualPass) { "PASS" } else { "FAIL" }
     @(
         "$Preset result: $Result"
@@ -229,7 +259,14 @@ foreach ($Preset in @("speech", "music")) {
         "$Preset actual sample rate: $(if ($LastTelemetry) { $LastTelemetry.sampleRate } else { 'N/A' })"
         "$Preset actual buffer: $(if ($LastTelemetry) { $LastTelemetry.bufferSize } else { 'N/A' })"
         "$Preset maximum callback CPU: $MaximumCpu"
+        "$Preset maximum callback execution: $MaximumExecutionMs ms"
+        "$Preset maximum callback peak execution: $MaximumExecutionPeakMs ms"
+        "$Preset maximum callback jitter: $MaximumJitterMs ms"
+        "$Preset maximum callback peak jitter: $MaximumJitterPeakMs ms"
         "$Preset maximum xruns: $MaximumXruns"
+        "$Preset maximum callback deadline misses: $MaximumDeadlineMisses"
+        "$Preset maximum driver xruns: $MaximumDriverXruns"
+        "$Preset maximum non-finite input samples: $MaximumNonFiniteInput"
         "$Preset maximum non-finite output samples: $MaximumNonFiniteOutput"
         "$Preset maximum active notches: $MaximumActiveNotches / 6"
         "$Preset deepest reported cut: $DeepestCut dB (limit $CutLimit dB)"
@@ -238,6 +275,9 @@ foreach ($Preset in @("speech", "music")) {
         "$Preset release/chatter observation: $ReleaseObserved"
         "$Preset chatter observation: $ChatterObserved"
         "$Preset audible discontinuity observation: $AudibleDiscontinuity"
+        "$Preset clean program transparency observation: $TransparentProgram"
+        "$Preset notch frequency tracking observation: $FrequencyTracked"
+        "$Preset notch depth ramp observation: $DepthRampObserved"
         "$Preset tone frequencies: $ToneFrequencies"
         "$Preset cut-depth/audible notes: $CutDepthNotes"
         ""
@@ -246,12 +286,22 @@ foreach ($Preset in @("speech", "music")) {
         preset = $Preset
         telemetrySamples = $Telemetry.Count
         callbackCpuMaximum = $MaximumCpu
+        callbackExecutionMsMaximum = $MaximumExecutionMs
+        callbackExecutionPeakMsMaximum = $MaximumExecutionPeakMs
+        callbackJitterMsMaximum = $MaximumJitterMs
+        callbackJitterPeakMsMaximum = $MaximumJitterPeakMs
         xrunsMaximum = $MaximumXruns
+        callbackDeadlineMissesMaximum = $MaximumDeadlineMisses
+        driverXrunsMaximum = $MaximumDriverXruns
+        nonFiniteInputMaximum = $MaximumNonFiniteInput
         nonFiniteOutputMaximum = $MaximumNonFiniteOutput
         activeNotchesMaximum = $MaximumActiveNotches
         deepestCutDb = $DeepestCut
         finalReleaseNotches = $FinalReleaseNotches
         telemetryReleaseObserved = $TelemetryReleaseObserved
+        transparentProgram = $TransparentProgram
+        frequencyTracked = $FrequencyTracked
+        depthRampObserved = $DepthRampObserved
         automatedPass = $AutomatedPass
         releaseAndChatterPass = $ManualPass
         result = $Result

@@ -156,3 +156,52 @@ override a failed audible observation.
 
 Stop and log a failure for any audible discontinuity, non-finite sample, missed
 deadline, unsafe output, unstable delay, false persistent cut, or unbounded cut.
+
+## Low-latency regression comparison
+
+Run the complete Release build and hardware matrix once for the reference build
+and once for the low-latency build being signed off. Use the same Windows
+machine, interface, driver, sample rate, route count, gain structure, and
+30-minute hold time for both runs. Do not compare runs made with different
+physical routes or different requested/actual buffer sizes.
+
+The release build must complete successfully before the matrix starts:
+
+```powershell
+.\scripts\windows-release.ps1 -AsioSdkPath C:\sdk\asiosdk
+```
+
+Omit `-AsioSdkPath` for a WASAPI/DirectSound-only build. Run
+`windows-hardware-session.ps1` for each available backend and retain both
+`hardware-matrix-*.csv` files and the raw `hardware-session-*.jsonl` files.
+The matrix must contain, for 64, 128, and 256 samples:
+
+- actual sample rate and actual buffer size;
+- maximum callback execution time and peak execution time;
+- maximum callback CPU fraction;
+- maximum smoothed callback jitter and peak jitter;
+- callback deadline misses and JUCE driver xruns;
+- maximum non-finite input and output sample counts.
+
+Compare those columns by requested buffer and backend. The low-latency build
+passes this section only when its execution and peak execution measurements do
+not regress against the reference beyond normal run-to-run variance, its
+callback CPU and jitter do not increase materially, and callback deadline
+misses, driver xruns, and non-finite counters remain zero. Keep the exact
+reference artifact and comparison notes with the signed-off evidence; a
+Linux build or a hosted Windows runner without physical endpoints cannot
+replace this comparison.
+
+For each available backend, run the acoustic stimulus session at the stable
+buffer selected by the matrix for both the reference and low-latency builds.
+Save each run under a distinct evidence directory before starting the next run.
+The program-only phase must remain transparent
+with protection enabled and no feedback source. During one- and two-tone
+phases, record the approximate source frequencies and verify the reported
+notches remain centered on those frequencies, ramp to the expected depth
+without a step, and release gradually after source removal. The session
+records the callback execution/jitter metrics, both xrun sources, non-finite
+input/output counters, and explicit tester observations for transparency,
+frequency tracking, depth ramp, and release. Any audible click, program-tone
+notch, frequency drift, abrupt depth step, chatter, non-finite sample, missed
+deadline, or xrun is a failure even if the summary file says `PASS`.

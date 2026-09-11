@@ -487,6 +487,30 @@ foreach ($Row in $Rows) {
         "callbackCpuMaximum" $Context ([ref]$MaximumCpu))
     [void](Convert-ToDouble (Get-PropertyValue $Row "xrunsMaximum") `
         "xrunsMaximum" $Context ([ref]$MaximumXruns))
+    $ExecutionMs = 0.0
+    $ExecutionPeakMs = 0.0
+    $JitterMs = 0.0
+    $JitterPeakMs = 0.0
+    $DeadlineMisses = 0.0
+    $DriverXruns = 0.0
+    $NonFiniteInput = 0.0
+    $NonFiniteOutput = 0.0
+    [void](Convert-ToDouble (Get-PropertyValue $Row "callbackExecutionMsMaximum") `
+        "callbackExecutionMsMaximum" $Context ([ref]$ExecutionMs))
+    [void](Convert-ToDouble (Get-PropertyValue $Row "callbackExecutionPeakMsMaximum") `
+        "callbackExecutionPeakMsMaximum" $Context ([ref]$ExecutionPeakMs))
+    [void](Convert-ToDouble (Get-PropertyValue $Row "callbackJitterMsMaximum") `
+        "callbackJitterMsMaximum" $Context ([ref]$JitterMs))
+    [void](Convert-ToDouble (Get-PropertyValue $Row "callbackJitterPeakMsMaximum") `
+        "callbackJitterPeakMsMaximum" $Context ([ref]$JitterPeakMs))
+    [void](Convert-ToDouble (Get-PropertyValue $Row "callbackDeadlineMissesMaximum") `
+        "callbackDeadlineMissesMaximum" $Context ([ref]$DeadlineMisses))
+    [void](Convert-ToDouble (Get-PropertyValue $Row "driverXrunsMaximum") `
+        "driverXrunsMaximum" $Context ([ref]$DriverXruns))
+    [void](Convert-ToDouble (Get-PropertyValue $Row "nonFiniteInputSamplesMaximum") `
+        "nonFiniteInputSamplesMaximum" $Context ([ref]$NonFiniteInput))
+    [void](Convert-ToDouble (Get-PropertyValue $Row "nonFiniteOutputSamplesMaximum") `
+        "nonFiniteOutputSamplesMaximum" $Context ([ref]$NonFiniteOutput))
 
     if ($ActualRate -ne $ExpectedSampleRate) {
         Add-Failure "$Context reports actual sample rate $ActualRate Hz; expected $ExpectedSampleRate Hz."
@@ -501,8 +525,30 @@ foreach ($Row in $Rows) {
     if ($MaximumCpu -lt 0 -or $MaximumCpu -gt $MaximumCallbackCpu) {
         Add-Failure "$Context reports callback CPU $MaximumCpu, outside the safe 0-$MaximumCallbackCpu ratio."
     }
+    foreach ($Metric in @(
+        @{ name = "callbackExecutionMsMaximum"; value = $ExecutionMs },
+        @{ name = "callbackExecutionPeakMsMaximum"; value = $ExecutionPeakMs },
+        @{ name = "callbackJitterMsMaximum"; value = $JitterMs },
+        @{ name = "callbackJitterPeakMsMaximum"; value = $JitterPeakMs }
+    )) {
+        if ($Metric.value -lt 0) {
+            Add-Failure "$Context reports a negative $($Metric.name) value $($Metric.value)."
+        }
+    }
+    if ($ExecutionPeakMs -lt $ExecutionMs) {
+        Add-Failure "$Context reports callback peak execution $ExecutionPeakMs ms below maximum execution $ExecutionMs ms."
+    }
     if ($MaximumXruns -ne 0) {
         Add-Failure "$Context reports $MaximumXruns xrun(s); expected zero."
+    }
+    if ($DeadlineMisses -ne 0) {
+        Add-Failure "$Context reports $DeadlineMisses callback deadline miss(es); expected zero."
+    }
+    if ($DriverXruns -ne 0) {
+        Add-Failure "$Context reports $DriverXruns driver xrun(s); expected zero."
+    }
+    if ($NonFiniteInput -ne 0 -or $NonFiniteOutput -ne 0) {
+        Add-Failure "$Context reports non-finite samples (input=$NonFiniteInput, output=$NonFiniteOutput); expected zero."
     }
     if (-not (Has-Value $Row "engineErrors")) {
         Add-Failure "$Context is missing engineErrors."
@@ -558,9 +604,18 @@ if (Test-Path -LiteralPath $SessionLogPath -PathType Leaf) {
             if (-not $TelemetryCases.ContainsKey($CurrentCase)) {
                 $TelemetryCases[$CurrentCase] = $true
             }
-            foreach ($TelemetryField in @("sampleRate", "bufferSize", "callbackCpu", "xruns")) {
+            foreach ($TelemetryField in @(
+                "sampleRate", "bufferSize", "callbackCpu", "callbackExecutionMs",
+                "callbackExecutionPeakMs", "callbackJitterMs", "callbackJitterPeakMs",
+                "xruns", "callbackDeadlineMisses", "driverXruns",
+                "nonFiniteInputSamples", "nonFiniteOutputSamples"
+            )) {
                 if (-not (Has-Value $Event $TelemetryField)) {
                     Add-Failure "Telemetry for matrix case $CurrentCase is missing $TelemetryField."
+                } else {
+                    $TelemetryNumber = 0.0
+                    [void](Convert-ToDouble (Get-PropertyValue $Event $TelemetryField) `
+                        $TelemetryField "Telemetry for matrix case $CurrentCase" ([ref]$TelemetryNumber))
                 }
             }
         }
@@ -678,7 +733,13 @@ foreach ($ExpectedStep in $ExpectedRedistribution.Keys) {
         continue
     }
     $TelemetryEvent = $RedistributionStepTelemetry[$ExpectedStep]
-    foreach ($Field in @("running", "callbackCpu", "xruns", "clockStability", "inputPeak", "outputPeak")) {
+    foreach ($Field in @(
+        "running", "callbackCpu", "callbackExecutionMs", "callbackExecutionPeakMs",
+        "callbackJitterMs", "callbackJitterPeakMs", "xruns", "callbackDeadlineMisses",
+        "driverXruns", "nonFiniteInputSamples", "nonFiniteOutputSamples",
+        "deviceClockDriftPpm", "deviceClockReady", "deviceClockAgeMs",
+        "inputPeak", "outputPeak"
+    )) {
         if (-not (Has-Value $TelemetryEvent $Field)) {
             Add-Failure "Notch redistribution step $ExpectedStep is missing $Field telemetry."
         }
@@ -697,11 +758,25 @@ foreach ($ExpectedStep in $ExpectedRedistribution.Keys) {
             "xruns" "Notch redistribution step $ExpectedStep" ([ref]$Xruns) -and $Xruns -ne 0) {
         Add-Failure "Notch redistribution step $ExpectedStep reports $Xruns xrun(s); expected zero."
     }
-    $ClockStability = 0.0
-    if (Convert-ToDouble (Get-PropertyValue $TelemetryEvent "clockStability") `
-            "clockStability" "Notch redistribution step $ExpectedStep" ([ref]$ClockStability) -and
-        ($ClockStability -lt 0 -or $ClockStability -gt 1)) {
-        Add-Failure "Notch redistribution step $ExpectedStep reports invalid clock stability $ClockStability."
+    $DriverXruns = 0.0
+    if (Convert-ToDouble (Get-PropertyValue $TelemetryEvent "driverXruns") `
+            "driverXruns" "Notch redistribution step $ExpectedStep" ([ref]$DriverXruns) -and
+        $DriverXruns -ne 0) {
+        Add-Failure "Notch redistribution step $ExpectedStep reports $DriverXruns driver xrun(s); expected zero."
+    }
+    foreach ($CounterField in @("callbackDeadlineMisses", "nonFiniteInputSamples", "nonFiniteOutputSamples")) {
+        $Counter = 0.0
+        if (Convert-ToDouble (Get-PropertyValue $TelemetryEvent $CounterField) `
+                $CounterField "Notch redistribution step $ExpectedStep" ([ref]$Counter) -and
+            $Counter -ne 0) {
+            Add-Failure "Notch redistribution step $ExpectedStep reports $Counter $CounterField; expected zero."
+        }
+    }
+    $ClockDrift = 0.0
+    if (Convert-ToDouble (Get-PropertyValue $TelemetryEvent "deviceClockDriftPpm") `
+            "deviceClockDriftPpm" "Notch redistribution step $ExpectedStep" ([ref]$ClockDrift) -and
+        [double]::IsNaN($ClockDrift)) {
+        Add-Failure "Notch redistribution step $ExpectedStep reports invalid clock drift $ClockDrift."
     }
     foreach ($PeakField in @("inputPeak", "outputPeak")) {
         $Peak = 0.0

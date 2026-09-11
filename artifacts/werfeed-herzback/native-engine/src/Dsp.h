@@ -293,6 +293,8 @@ public:
             targetFrequency[i].store(0.0f);
             targetDepth[i].store(0.0f);
             targetQ[i].store(0.0f);
+            targetSinW[i].store(0.0f);
+            targetNegTwoCosW[i].store(0.0f);
             targetHotspot[i].store(false);
             targetSequence[i].store(0, std::memory_order_relaxed);
         }
@@ -402,6 +404,8 @@ public:
             const auto frequency = targetFrequency[i].load(std::memory_order_relaxed);
             const auto depth = targetDepth[i].load(std::memory_order_relaxed);
             const auto q = targetQ[i].load(std::memory_order_relaxed);
+            const auto sinW = targetSinW[i].load(std::memory_order_relaxed);
+            const auto negTwoCosW = targetNegTwoCosW[i].load(std::memory_order_relaxed);
             const auto hotspot = targetHotspot[i].load(std::memory_order_relaxed);
             const auto after = targetSequence[i].load(std::memory_order_acquire);
             if (before != after || (after & 1u) != 0u) continue;
@@ -415,6 +419,8 @@ public:
                 state.frequency = frequency;
                 state.targetDepthDb = depth;
                 state.q = q;
+                state.sinW = sinW;
+                state.negTwoCosW = negTwoCosW;
                 state.calibrationHotspot = hotspot;
             }
         }
@@ -494,6 +500,7 @@ private:
         float releaseSmoothing = 0.00025f;
         float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
         float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+        float sinW = 0, negTwoCosW = 0;
         int coefficientCountdown = 0;
         double sampleRate = 48000;
         float process(float x) noexcept {
@@ -503,14 +510,13 @@ private:
             if (std::abs(currentDepthDb) < 0.005f || frequency <= 0) return x;
             if (coefficientCountdown-- <= 0) {
                 coefficientCountdown = 31;
-                const auto w = 2.0f * pi * frequency / static_cast<float>(sampleRate);
-                const auto alpha = std::sin(w) / (2.0f * q);
+                const auto alpha = sinW / (2.0f * q);
                 const auto gain = std::pow(10.0f, currentDepthDb / 40.0f);
                 const auto denominator = 1.0f + alpha / gain;
                 b0 = (1.0f + alpha * gain) / denominator;
-                b1 = -2.0f * std::cos(w) / denominator;
+                b1 = negTwoCosW / denominator;
                 b2 = (1.0f - alpha * gain) / denominator;
-                a1 = -2.0f * std::cos(w) / denominator;
+                a1 = negTwoCosW / denominator;
                 a2 = (1.0f - alpha / gain) / denominator;
             }
             const auto y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
@@ -807,6 +813,14 @@ private:
             targetFrequency[i].store(analysisNotches[i].frequency, std::memory_order_relaxed);
             targetDepth[i].store(analysisNotches[i].targetDepthDb, std::memory_order_relaxed);
             targetQ[i].store(analysisNotches[i].q, std::memory_order_relaxed);
+            const auto frequency = analysisNotches[i].frequency;
+            const auto q = analysisNotches[i].q;
+            const auto w = frequency > 0.0f && q > 0.0f
+                ? 2.0f * pi * frequency / static_cast<float>(sampleRate)
+                : 0.0f;
+            targetSinW[i].store(w == 0.0f ? 0.0f : std::sin(w), std::memory_order_relaxed);
+            targetNegTwoCosW[i].store(w == 0.0f ? 0.0f : -2.0f * std::cos(w),
+                                      std::memory_order_relaxed);
             targetHotspot[i].store(analysisNotches[i].calibrationHotspot, std::memory_order_relaxed);
             targetSequence[i].store(sequence + 2u, std::memory_order_release);
         }
@@ -1114,6 +1128,7 @@ private:
     std::array<std::atomic<float>, analyzerBins> publishedSpectrum {};
     std::array<std::atomic<float>, maxNotches> publishedFrequency {}, publishedDepth {}, publishedQ {};
     std::array<std::atomic<float>, maxNotches> targetFrequency {}, targetDepth {}, targetQ {};
+    std::array<std::atomic<float>, maxNotches> targetSinW {}, targetNegTwoCosW {};
     std::array<std::atomic<bool>, maxNotches> targetHotspot {};
     std::array<std::atomic<float>, maxNotches> manualNotchFrequency {};
     std::array<std::atomic<unsigned int>, maxNotches> targetSequence {};

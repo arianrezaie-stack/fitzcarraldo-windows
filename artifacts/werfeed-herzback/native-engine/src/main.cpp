@@ -369,6 +369,8 @@ public:
         callbackJitterRatio.store(0.0, std::memory_order_relaxed);
         callbackJitterMs.store(0.0, std::memory_order_relaxed);
         callbackJitterPeakMs.store(0.0, std::memory_order_relaxed);
+        callbackExecutionMs.store(0.0, std::memory_order_relaxed);
+        callbackExecutionPeakMs.store(0.0, std::memory_order_relaxed);
         callbackDeadlineMisses.store(0, std::memory_order_relaxed);
         driverXruns.store(0, std::memory_order_relaxed);
         deviceClockDriftPpm.store(0.0, std::memory_order_relaxed);
@@ -431,9 +433,30 @@ public:
             }
         }
         for (int channel = 0; channel < outs; ++channel) std::fill_n(output[channel], samples, 0.0f);
+        float peakIn = 0.0f, peakOut = 0.0f;
+        unsigned long long nonFiniteInput = 0, nonFiniteOutput = 0;
+        std::array<int, werfeed::maxRoutes> monitoredOutputChannels {};
+        int monitoredOutputCount = 0;
+        const auto monitorOutputChannel = [&](int channel) noexcept {
+            for (int index = 0; index < monitoredOutputCount; ++index)
+                if (monitoredOutputChannels[static_cast<std::size_t>(index)] == channel) return;
+            if (monitoredOutputCount < static_cast<int>(monitoredOutputChannels.size()))
+                monitoredOutputChannels[static_cast<std::size_t>(monitoredOutputCount++)] = channel;
+        };
         const auto calibrationActive = calibrating.load(std::memory_order_acquire);
         auto calibrationIndex = calibrationPosition.load(std::memory_order_relaxed);
         if (calibrationActive) {
+            const auto calibrationRouteState = routes[static_cast<std::size_t>(calibrationRoute)];
+            if (calibrationRouteState.input >= 0 && calibrationRouteState.input < ins) {
+                const auto* source = input[calibrationRouteState.input];
+                for (int frame = 0; frame < samples; ++frame) {
+                    const auto value = source[frame];
+                    if (!std::isfinite(value)) ++nonFiniteInput;
+                    else peakIn = std::max(peakIn, std::abs(value));
+                }
+            }
+            if (calibrationRouteState.output >= 0 && calibrationRouteState.output < outs)
+                monitorOutputChannel(calibrationRouteState.output);
             werfeed::routeCalibrationWithAnnouncement(input, ins, output, outs, samples,
                 routes[static_cast<std::size_t>(calibrationRoute)],
                 calibrationExcitation, calibrationRecording, calibrationAnnouncement,
@@ -446,9 +469,18 @@ public:
                     || route.output < 0 || route.output >= outs)
                     continue;
                 auto& processor = processors[static_cast<std::size_t>(routeIndex)];
+                monitorOutputChannel(route.output);
+                const auto* source = input[route.input];
                 processor.pullPendingNotchUpdates();
                 for (int frame = 0; frame < samples; ++frame) {
-                    const auto value = processor.process(input[route.input][frame]);
+                    auto value = source[frame];
+                    if (!std::isfinite(value)) {
+                        ++nonFiniteInput;
+                        value = 0.0f;
+                    } else {
+                        peakIn = std::max(peakIn, std::abs(value));
+                    }
+                    value = processor.process(value);
                     output[route.output][frame] += value;
                 }
                 // Analyze the source route. A real acoustic feedback loop
@@ -466,29 +498,31 @@ public:
                 calibrationComplete.store(true, std::memory_order_release);
             }
         }
-        float peakIn = 0.0f, peakOut = 0.0f;
-        unsigned long long nonFiniteInput = 0, nonFiniteOutput = 0;
-        for (int c = 0; c < ins; ++c) {
-            for (int n = 0; n < samples; ++n) {
-                const auto value = input[c][n];
-                if (!std::isfinite(value)) { ++nonFiniteInput; continue; }
-                peakIn = std::max(peakIn, std::abs(value));
-            }
-        }
-        for (int c = 0; c < outs; ++c) {
-            for (int n = 0; n < samples; ++n) {
-                auto& value = output[c][n];
-                if (!std::isfinite(value)) { value = 0.0f; ++nonFiniteOutput; continue; }
-                peakOut = std::max(peakOut, std::abs(value));
+        for (int channelIndex = 0; channelIndex < monitoredOutputCount; ++channelIndex) {
+            auto* destination = output[monitoredOutputChannels[
+                static_cast<std::size_t>(channelIndex)]];
+            for (int frame = 0; frame < samples; ++frame) {
+                auto& value = destination[frame];
+                if (!std::isfinite(value)) {
+                    value = 0.0f;
+                    ++nonFiniteOutput;
+                } else {
+                    peakOut = std::max(peakOut, std::abs(value));
+                }
             }
         }
         nonFiniteInputSamples.fetch_add(nonFiniteInput, std::memory_order_relaxed);
         nonFiniteOutputSamples.fetch_add(nonFiniteOutput, std::memory_order_relaxed);
         inputPeak.store(peakIn, std::memory_order_relaxed); outputPeak.store(peakOut, std::memory_order_relaxed);
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begun).count();
+        const auto elapsedMs = elapsed * 1000.0;
+        callbackExecutionMs.store(elapsedMs, std::memory_order_relaxed);
+        const auto previousExecutionPeak = callbackExecutionPeakMs.load(std::memory_order_relaxed);
+        if (elapsedMs > previousExecutionPeak)
+            callbackExecutionPeakMs.store(elapsedMs, std::memory_order_relaxed);
         const auto budget = samples / sampleRate.load();
         cpu.store(budget > 0.0 ? elapsed / budget : 0.0, std::memory_order_relaxed);
-         if (elapsed > budget) callbackDeadlineMisses.fetch_add(1, std::memory_order_relaxed);
+        if (elapsed > budget) callbackDeadlineMisses.fetch_add(1, std::memory_order_relaxed);
     }
 
     void emitState(const char* phase) {
@@ -527,6 +561,8 @@ public:
             callbackDeadlineMisses.load(std::memory_order_relaxed)));
         o->setProperty("driverXruns", static_cast<double>(
             driverXruns.load(std::memory_order_relaxed)));
+        o->setProperty("callbackExecutionMs", callbackExecutionMs.load());
+        o->setProperty("callbackExecutionPeakMs", callbackExecutionPeakMs.load());
         o->setProperty("callbackJitterMs", callbackJitterMs.load());
         o->setProperty("callbackJitterPeakMs", callbackJitterPeakMs.load());
         o->setProperty("deviceClockDriftPpm", deviceClockDriftPpm.load());
@@ -903,6 +939,7 @@ private:
     std::atomic<double> sampleRate { 0.0 }, cpu { 0.0 };
     std::atomic<double> callbackJitterRatio { 0.0 }, callbackJitterMs { 0.0 };
     std::atomic<double> callbackJitterPeakMs { 0.0 };
+    std::atomic<double> callbackExecutionMs { 0.0 }, callbackExecutionPeakMs { 0.0 };
     std::atomic<double> deviceClockDriftPpm { 0.0 }, deviceClockAgeMs { 0.0 };
     std::atomic<int> bufferSize { 0 };
     std::atomic<unsigned long long> callbackDeadlineMisses { 0 }, driverXruns { 0 };

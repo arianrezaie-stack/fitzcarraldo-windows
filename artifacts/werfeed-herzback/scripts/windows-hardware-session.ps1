@@ -383,6 +383,30 @@ foreach ($BufferSize in $BufferSizes) {
     $MaximumXruns = if ($Telemetry.Count -gt 0) {
         ($Telemetry | Measure-Object -Property xruns -Maximum).Maximum
     } else { $null }
+    $MaximumExecutionMs = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackExecutionMs -Maximum).Maximum
+    } else { $null }
+    $MaximumExecutionPeakMs = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackExecutionPeakMs -Maximum).Maximum
+    } else { $null }
+    $MaximumJitterMs = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackJitterMs -Maximum).Maximum
+    } else { $null }
+    $MaximumJitterPeakMs = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackJitterPeakMs -Maximum).Maximum
+    } else { $null }
+    $MaximumDriverXruns = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property driverXruns -Maximum).Maximum
+    } else { $null }
+    $MaximumDeadlineMisses = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property callbackDeadlineMisses -Maximum).Maximum
+    } else { $null }
+    $MaximumNonFiniteInput = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property nonFiniteInputSamples -Maximum).Maximum
+    } else { $null }
+    $MaximumNonFiniteOutput = if ($Telemetry.Count -gt 0) {
+        ($Telemetry | Measure-Object -Property nonFiniteOutputSamples -Maximum).Maximum
+    } else { $null }
     $ActualRate = if ($LastTelemetry) { $LastTelemetry.sampleRate } else { $null }
     $ActualBuffer = if ($LastTelemetry) { $LastTelemetry.bufferSize } else { $null }
     $EngineResult = if ($Errors.Count -gt 0) { "ENGINE ERROR" } else { "PASS" }
@@ -403,7 +427,15 @@ foreach ($BufferSize in $BufferSizes) {
         sampleRate = $ActualRate
         bufferSizeActual = $ActualBuffer
         callbackCpuMaximum = $MaximumCpu
+        callbackExecutionMsMaximum = $MaximumExecutionMs
+        callbackExecutionPeakMsMaximum = $MaximumExecutionPeakMs
+        callbackJitterMsMaximum = $MaximumJitterMs
+        callbackJitterPeakMsMaximum = $MaximumJitterPeakMs
         xrunsMaximum = $MaximumXruns
+        callbackDeadlineMissesMaximum = $MaximumDeadlineMisses
+        driverXrunsMaximum = $MaximumDriverXruns
+        nonFiniteInputSamplesMaximum = $MaximumNonFiniteInput
+        nonFiniteOutputSamplesMaximum = $MaximumNonFiniteOutput
         engineErrors = $Errors.Count
         audiblePass = $AudiblePass
         result = $EngineResult

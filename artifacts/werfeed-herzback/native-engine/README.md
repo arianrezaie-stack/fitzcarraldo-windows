@@ -71,8 +71,9 @@ the physical mono routes:
 The session launches the latest portable executable, confirms startup, then
 runs 1 through 8 one-to-one mono routes at 48 kHz for 64, 128, and 256-sample
 buffers. It records the actual device rate and buffer, maximum callback CPU,
-maximum local xrun estimate, engine errors, audible pass/fail, and tester
-metadata in `windows-validation-output`. Use a smaller
+maximum callback execution/jitter values, callback deadline misses, both driver
+and local xrun counts, non-finite input/output counters, engine errors, audible
+pass/fail, and tester metadata in `windows-validation-output`. Use a smaller
 `-SecondsPerRouteCount` only for a smoke test; the sign-off matrix uses the
 30-minute default. Keep output gain low and a physical mute within reach.
 
@@ -126,16 +127,20 @@ output, and limited to eight. The physical input/output device pair and
 backend are shared by the engine so all routes use one stable device clock;
 each route can independently select its input channel and output channel.
 While running, status events are capped at 10 Hz and expose actual device rate,
-buffer size, callback CPU fraction, smoothed callback jitter and peak callback
-jitter, callback deadline misses, the driver's native xrun count, and cumulative
-non-finite input/output sample counts and input/output peaks. Each telemetry
-event also includes a long-window device-clock drift estimate in ppm, its
-measurement age, readiness, and source label. For WASAPI and ASIO this first
-implementation estimates the effective backend frame clock from delivered
-callback frames against the host's high-resolution steady clock; it does not
-claim direct access to the already-open backend's private IAudioClock or ASIO
-sample-position handle. Each telemetry event also has a monotonically
-increasing sequence number. Device
+buffer size, callback CPU fraction, callback execution time and peak execution
+time, smoothed callback jitter and peak callback jitter, callback deadline
+misses, the driver's native xrun count, and cumulative non-finite input/output
+sample counts and input/output peaks. Input diagnostics are limited to
+configured route channels; output sanitization and peak measurement are limited
+to channels used by configured routes. Each telemetry event also includes a
+long-window device-clock drift estimate in ppm, its measurement age, readiness,
+and source label. For WASAPI and ASIO this first implementation estimates the
+effective backend frame clock from delivered callback frames against the host's
+high-resolution steady clock; it does not claim direct access to the already-open
+backend's private IAudioClock or ASIO sample-position handle. Static notch
+frequency terms are calculated on the analysis thread so the realtime callback
+does not evaluate `sin()` or `cos()` while refreshing coefficients. Each
+telemetry event also has a monotonically increasing sequence number. Device
 configuration and route changes are deliberately rejected while running to keep
 callback memory immutable.
 All compiled backends are enumerated, but only eligible live-sound transports
