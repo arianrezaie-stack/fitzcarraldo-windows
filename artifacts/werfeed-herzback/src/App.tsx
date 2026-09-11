@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, RefreshCw, RotateCcw, SlidersHorizontal, Timer, TimerReset, Volume2, Waves, X, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, RefreshCw, RotateCcw, SlidersHorizontal, Timer, TimerReset, Waves, X, Zap } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -699,8 +699,6 @@ function Home() {
           { label: 'Callback CPU', value: value(telemetry.callbackCpu === undefined ? undefined : telemetry.callbackCpu * 100), unit: '%', icon: <Activity size={14} />, level: telemetry.callbackCpu === undefined ? undefined : telemetry.callbackCpu * 100 },
           { label: 'Round-trip buffer', value: value(latency, 2), unit: 'ms est.', icon: <Gauge size={14} />, level: undefined },
           { label: 'Callback jitter', value: value(telemetry.callbackJitterMs, 2), unit: `ms · peak ${value(telemetry.callbackJitterPeakMs, 2)}`, icon: <Timer size={14} />, level: callbackJitterScore === undefined ? undefined : callbackJitterScore * 100, tone: callbackJitterTone },
-          { label: 'Deadline misses', value: telemetry.callbackDeadlineMisses === undefined ? '—' : String(telemetry.callbackDeadlineMisses), unit: 'callback', icon: <AlertTriangle size={14} />, level: undefined },
-          { label: 'Driver xruns', value: telemetry.driverXruns === undefined ? '—' : String(telemetry.driverXruns), unit: 'native', icon: <Volume2 size={14} />, level: undefined },
           { label: 'Device clock', value: deviceClockReady ? value(deviceClockPpm, 0) : audioRunning ? 'warming' : '—', unit: 'ppm', icon: <Waves size={14} />, level: deviceClockPpm === undefined ? undefined : Math.max(0, 100 - Math.min(100, Math.abs(deviceClockPpm) / 2)), tone: deviceClockTone },
         ].map((metric) => <div className="metric" key={metric.label}><div className="metric-head"><span>{metric.label}</span>{metric.icon}</div><div className={`metric-value ${metric.tone ?? ''}`}>{metric.value} <small>{metric.unit}</small></div><Meter level={metric.level} /></div>)}</div>
         <div className="telemetry-footnote">Clock source: {telemetry.clockMeasurementSource ?? '—'}{telemetry.deviceClockAgeMs === undefined ? '' : ` · window ${value(telemetry.deviceClockAgeMs / 1000, 1)} s`}</div>
