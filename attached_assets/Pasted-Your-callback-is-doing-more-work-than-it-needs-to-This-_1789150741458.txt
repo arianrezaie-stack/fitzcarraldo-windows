@@ -1,0 +1,260 @@
+Your callback is doing more work than it needs to
+
+This section is particularly interesting:
+
+for (int c = 0; c < ins; ++c) {
+    for (int n = 0; n < samples; ++n) {
+        ...
+        std::isfinite()
+        std::abs()
+    }
+}
+
+for (int c = 0; c < outs; ++c) {
+    for (int n = 0; n < samples; ++n) {
+        ...
+        std::isfinite()
+        std::abs()
+    }
+}
+
+followed by atomic updates of the statistics.
+
+That means every callback scans every input and output sample, even though your actual processing only uses the configured route channels.
+
+For a real-time feedback suppressor, I'd strongly consider moving the diagnostic scanning behind a compile-time/runtime diagnostic switch.
+
+For production:
+
+#ifdef WERFEED_DIAGNOSTICS
+    // expensive peak/non-finite scan
+#endif
+
+or preferably a runtime mode that isn't enabled during normal low-latency operation.
+
+This won't necessarily explain 0.8 ms by itself, but it's unnecessary work in the hottest thread.
+
+3. The biggest DSP optimization opportunity is your notch loop
+
+You currently do:
+
+for (std::size_t i = 0; i < capacity; ++i)
+    wet = states[i].process(wet);
+
+for every sample.
+
+And each notch periodically executes:
+
+std::sin()
+std::pow()
+std::cos()
+
+every 32 samples.
+
+With 48 notches, that's potentially:
+
+48 biquads × every sample
++
+48 × transcendental coefficient updates every 32 samples
+
+The second part isn't necessarily disastrous, but it's unnecessary inside the callback.
+
+I'd change the architecture
+
+The analysis/control thread should calculate the biquad coefficients.
+
+Then the audio callback should only perform:
+
+y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2;
+
+No:
+
+sin
+cos
+pow
+log
+
+in the RT callback.
+
+That's a much more deterministic design.
+
+4. pullPendingNotchUpdates() is actually pretty good
+
+This part is thoughtfully designed.
+
+You're using a sequence counter so the callback doesn't combine a frequency from one update with depth/Q from another.
+
+And the callback does not take processorMutex.
+
+That's good.
+
+However, you are doing a lot of atomic loads every block:
+
+targetSequence
+targetFrequency
+targetDepth
+targetQ
+targetHotspot
+
+for every notch, followed by publishing state for every notch.
+
+That's probably not your 0.8 ms problem, but we can make it cleaner later with a single immutable/published coefficient snapshot per route rather than dozens of atomics.
+
+5. Your SPSC ring buffer is appropriate
+
+This is one part I would not rewrite just because we're optimizing.
+
+You've correctly separated:
+
+audio callback
+     ↓
+SPSC ring
+     ↓
+analysis thread
+
+and the callback only copies samples into the ring.
+
+That's the right architecture for the FFT/analyzer.
+
+The 64K ring is also plenty large:
+
+SpscRingBuffer<1u << 16>
+
+6. Your analysis thread is potentially bursty
+
+You have:
+
+if (!engine.pumpAnalysis())
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+This is fine functionally, but it means the analysis thread is essentially:
+
+process as much as possible
+↓
+sleep 1 ms when empty
+↓
+wake
+↓
+process
+
+For a feedback detector this can create bursts of analysis activity competing with the audio thread for CPU/cache.
+
+I'd rather make the analysis scheduling event-driven or periodically paced, depending on how quickly you actually need detection.
+
+Your FFT is 4096 samples with a 256-sample hop.
+
+At 48 kHz that's:
+
+4096 / 48000 = 85.3 ms analysis window
+256 / 48000 = 5.33 ms hop
+
+You don't need the analysis thread spinning aggressively to support that.
+
+7. There's an important issue with your clock measurement
+
+This:
+
+observedRate = deviceClockFrames / clockAge;
+driftPpm = (observedRate - rate) / rate * 1e6;
+
+looks mathematically reasonable, but it isn't measuring the hardware clock. It's measuring how many frames your callback has delivered to your process relative to steady_clock.
+
+Those aren't necessarily the same thing.
+
+For actual Windows WASAPI clock stability, I'd want to get down to the underlying IAudioClock / device position rather than infer it from callback frequency.
+
+That becomes especially important if your app is doing:
+
+input device clock
+        ↓
+DSP
+        ↓
+output device clock
+
+because two independent devices can genuinely run at slightly different rates.
+
+If they're separate physical devices, clock drift is a real audio-engine problem, not merely a scheduling problem.
+
+8. Another thing I want to investigate: your audio-thread priority
+
+From what you've uploaded so far, I don't see evidence that you're explicitly putting the native audio callback onto a Windows MMCSS audio task class.
+
+That's something I'd investigate before trying exotic DSP optimizations.
+
+For Windows low-latency audio I'd want something along the lines of:
+
+MMCSS
+  "Pro Audio" / "Audio"
+       ↓
+audio callback thread
+
+with sensible CPU affinity behavior.
+
+Don't just raise the process to REALTIME_PRIORITY_CLASS. That's usually the wrong hammer.
+
+If JUCE/WASAPI is already doing the appropriate scheduling internally, we shouldn't fight it. But I want to inspect your device/backend initialization code before recommending a specific implementation.
+
+9. There's one measurement change I'd make immediately
+
+Instead of only measuring:
+
+callback-to-callback interval
+
+measure three quantities:
+
+A. Callback period
+callbackStart[n] - callbackStart[n-1]
+B. DSP execution time
+callbackEnd - callbackStart
+C. DSP budget utilization
+executionTime / (samples / sampleRate)
+
+You already have C approximately:
+
+cpu.store(elapsed / budget);
+
+and deadline misses:
+
+if (elapsed > budget)
+    callbackDeadlineMisses++;
+
+But I'd add a peak execution time and perhaps p99/p999 rather than just the smoothed CPU ratio.
+
+That will tell us whether the 0.8 ms is:
+
+Windows scheduling:
+    callback arrives 0.8 ms late
+
+or
+
+DSP:
+    callback occasionally takes 0.8 ms longer
+
+Those require completely different fixes.
+
+My priority order
+
+I wouldn't start randomly optimizing everything. I'd do it in this order:
+
+Priority 1 — fix the measurements
+
+Separate:
+
+callback scheduling jitter
+DSP execution jitter
+actual device-clock drift
+Priority 2 — remove diagnostics from the RT path
+
+Especially the full input/output isfinite + peak scans.
+
+Priority 3 — precompute notch coefficients
+
+Get sin/cos/pow out of the callback.
+
+Priority 4 — inspect Windows/WASAPI thread scheduling
+
+Determine whether the callback is getting appropriate MMCSS treatment.
+
+Priority 5 — deal with actual clock drift
+
+If input/output are separate hardware clocks, implement a very small asynchronous sample-rate correction rather than trying to make callback timing itself perfect.
