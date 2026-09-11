@@ -28,6 +28,7 @@ $MetadataPath = Join-Path $EvidenceRoot "hardware-session-$SafeDeviceType-metada
 $EnumerationPath = Join-Path $EvidenceRoot "hardware-device-enumeration-$SafeDeviceType.jsonl"
 $EndpointInventoryPath = Join-Path $EvidenceRoot "audio-endpoint-inventory-$SafeDeviceType.json"
 $RouteStabilityPath = Join-Path $EvidenceRoot "route-stability-$SafeDeviceType.jsonl"
+$RouteResetPath = Join-Path $EvidenceRoot "route-reset-restart-$SafeDeviceType.json"
 $ValidationReportPath = Join-Path $EvidenceRoot "hardware-validation-$SafeDeviceType.txt"
 
 if (-not (Test-Path $Engine)) {
@@ -37,7 +38,7 @@ if (-not (Test-Path $Engine)) {
 New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
 Remove-Item -Force -ErrorAction SilentlyContinue `
     $SessionLog, $Results, $MatrixPath, $MetadataPath, $EnumerationPath,
-    $EndpointInventoryPath, $RouteStabilityPath, $ValidationReportPath
+    $EndpointInventoryPath, $RouteStabilityPath, $RouteResetPath, $ValidationReportPath
 
 Write-Host "SAFETY: Set output gain to minimum and keep a physical mute within reach."
 $SafetyReady = Read-Host "Type READY when the test area is safe"
@@ -69,10 +70,113 @@ if ($PortableStartup -notmatch '^(?i:yes)$') {
     if (-not $PortableProcess.HasExited) { Stop-Process -Id $PortableProcess.Id -Force }
     throw "Portable artifact startup was not confirmed."
 }
-Write-Host "Close the portable app, then press Enter to continue with the native hardware session."
-[void](Read-Host)
+
+$Tester = Read-Host "Tester name or initials"
+$RouteResetEvidence = [ordered]@{
+    schemaVersion = 1
+    test = "route-reset-restart"
+    capturedAt = (Get-Date).ToString("o")
+    portableExecutable = (Resolve-Path $PortableExecutable).Path
+    tester = $Tester
+    status = "incomplete"
+}
+$RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+
+$ResetRoute = Read-Host "Enter the route number that will be reset (1-4)"
+$RetainedRoute = Read-Host "Enter the other calibrated route number (1-4)"
+if ($ResetRoute -notmatch '^[1-4]$' -or $RetainedRoute -notmatch '^[1-4]$' -or $ResetRoute -eq $RetainedRoute) {
+    $RouteResetEvidence.status = "fail"
+    $RouteResetEvidence.failure = "Reset and retained routes must be different route numbers from 1 through 4."
+    $RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+    throw "Route reset evidence requires two different route numbers from 1 through 4."
+}
+$RouteResetEvidence.resetRoute = [int]$ResetRoute
+$RouteResetEvidence.retainedRoute = [int]$RetainedRoute
+
+$RouteResetEvidence.twoMappedRoutesBaselineSaved = (Read-Host `
+    "In the packaged app, map and calibrate both routes. Do both route cards show baseline saved? (yes/no)") `
+    -match '^(?i:yes)$'
+$RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+if (-not $RouteResetEvidence.twoMappedRoutesBaselineSaved) {
+    $RouteResetEvidence.status = "fail"
+    $RouteResetEvidence.failure = "Both mapped routes did not show baseline saved before reset."
+    $RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+    throw "Route reset evidence failed before the reset step. See $RouteResetPath"
+}
+
+$RouteResetEvidence.resetRouteNeedsCalibration = (Read-Host `
+    "Reset only Route $ResetRoute. Does it show needs calibration? (yes/no)") `
+    -match '^(?i:yes)$'
+$RouteResetEvidence.retainedRouteRemainedCalibratedAfterReset = (Read-Host `
+    "After that reset, does Route $RetainedRoute remain baseline saved? (yes/no)") `
+    -match '^(?i:yes)$'
+$RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+if (-not $RouteResetEvidence.resetRouteNeedsCalibration -or `
+    -not $RouteResetEvidence.retainedRouteRemainedCalibratedAfterReset) {
+    $RouteResetEvidence.status = "fail"
+    $RouteResetEvidence.failure = "Reset did not leave only the selected route needing calibration."
+    $RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+    throw "Route reset evidence failed after reset. See $RouteResetPath"
+}
+
+Write-Host "Close the packaged app now. The restart check requires the app process to exit before it is reopened."
+[void](Read-Host "Press Enter after closing the packaged app")
+Start-Sleep -Seconds 2
+$PortableProcess.Refresh()
 if (-not $PortableProcess.HasExited) {
-    Stop-Process -Id $PortableProcess.Id -Force
+    $RouteResetEvidence.status = "fail"
+    $RouteResetEvidence.failure = "The packaged app was still running when the restart was requested."
+    $RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+    throw "Packaged app did not exit before restart. Close it and rerun the session."
+}
+$RouteResetEvidence.appClosedBeforeRestart = $true
+$RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+
+Write-Host "Reopening portable artifact: $PortableExecutable"
+$PortableRestartProcess = Start-Process -FilePath $PortableExecutable -PassThru
+Start-Sleep -Seconds 5
+if ($PortableRestartProcess.HasExited) {
+    $RouteResetEvidence.status = "fail"
+    $RouteResetEvidence.failure = "The packaged app exited during the restart check with code $($PortableRestartProcess.ExitCode)."
+    $RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+    throw "Packaged artifact exited during restart with code $($PortableRestartProcess.ExitCode)."
+}
+$RouteResetEvidence.appRestarted = $true
+$RouteResetEvidence.resetRouteNeedsCalibrationAfterRestart = (Read-Host `
+    "After reopening, does Route $ResetRoute still show needs calibration? (yes/no)") `
+    -match '^(?i:yes)$'
+$RouteResetEvidence.retainedRouteRemainedCalibratedAfterRestart = (Read-Host `
+    "After reopening, does Route $RetainedRoute still show baseline saved? (yes/no)") `
+    -match '^(?i:yes)$'
+$RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+if (-not $RouteResetEvidence.resetRouteNeedsCalibrationAfterRestart -or `
+    -not $RouteResetEvidence.retainedRouteRemainedCalibratedAfterRestart) {
+    $RouteResetEvidence.status = "fail"
+    $RouteResetEvidence.failure = "Calibration state did not survive the packaged app restart as expected."
+    $RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+    throw "Route reset restart evidence failed after reopening the app. See $RouteResetPath"
+}
+
+$RouteResetEvidence.resetRouteRecalibrated = (Read-Host `
+    "Recalibrate Route $ResetRoute. Does it show baseline saved again? (yes/no)") `
+    -match '^(?i:yes)$'
+$RouteResetEvidence.retainedRouteUnchangedAfterRecalibration = (Read-Host `
+    "After recalibration, does Route $RetainedRoute remain baseline saved and unchanged? (yes/no)") `
+    -match '^(?i:yes)$'
+$RouteResetEvidence.status = if ($RouteResetEvidence.resetRouteRecalibrated -and `
+    $RouteResetEvidence.retainedRouteUnchangedAfterRecalibration) { "pass" } else { "fail" }
+if ($RouteResetEvidence.status -ne "pass") {
+    $RouteResetEvidence.failure = "The reset route was not restored without changing the retained route."
+}
+$RouteResetEvidence | ConvertTo-Json -Depth 5 | Set-Content $RouteResetPath
+if ($RouteResetEvidence.status -ne "pass") {
+    throw "Route reset restart evidence failed during recalibration. See $RouteResetPath"
+}
+
+Write-Host "Close the reopened packaged app, then press Enter to continue with the native hardware session."
+[void](Read-Host)
+if (-not $PortableRestartProcess.HasExited) {
+    Stop-Process -Id $PortableRestartProcess.Id -Force
 }
 
 if (-not $InterfaceModel) {
@@ -94,6 +198,8 @@ $Metadata = [ordered]@{
     secondsPerRouteCount = $SecondsPerRouteCount
     portableExecutable = (Resolve-Path $PortableExecutable).Path
     portableStartupConfirmed = $true
+    routeResetRestartConfirmed = $true
+    routeResetEvidence = (Split-Path -Leaf $RouteResetPath)
     tester = $Tester
     endpointInventory = (Split-Path -Leaf $EndpointInventoryPath)
 }
@@ -194,6 +300,7 @@ if ($MatchingInput.Count -eq 0 -or $MatchingOutput.Count -eq 0) {
     "Requested buffers: $($BufferSizes -join ', ') samples"
     "Tester: $Tester"
     "Portable startup: PASS"
+    "Route reset/restart: PASS ($RouteResetPath)"
     "Device enumeration: PASS ($EnumerationPath)"
     "Audio endpoint inventory: $EndpointInventoryPath"
     ""

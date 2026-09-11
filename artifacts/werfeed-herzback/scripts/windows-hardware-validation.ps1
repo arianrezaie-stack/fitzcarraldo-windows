@@ -28,6 +28,7 @@ $MetadataPath = Join-Path $EvidenceRoot "hardware-session-$SafeDeviceType-metada
 $EnumerationPath = Join-Path $EvidenceRoot "hardware-device-enumeration-$SafeDeviceType.jsonl"
 $EndpointInventoryPath = Join-Path $EvidenceRoot "audio-endpoint-inventory-$SafeDeviceType.json"
 $RouteStabilityPath = Join-Path $EvidenceRoot "route-stability-$SafeDeviceType.jsonl"
+$RouteResetPath = Join-Path $EvidenceRoot "route-reset-restart-$SafeDeviceType.json"
 $ReportPath = Join-Path $EvidenceRoot "hardware-validation-$SafeDeviceType.txt"
 
 $Failures = @()
@@ -176,7 +177,7 @@ if ($null -ne $Metadata) {
     foreach ($RequiredField in @(
         "capturedAt", "deviceType", "inputDevice", "outputDevice",
         "interfaceModel", "driverVersion", "tester", "sampleRateRequested",
-        "bufferSizes", "portableStartupConfirmed"
+        "bufferSizes", "portableStartupConfirmed", "routeResetRestartConfirmed"
     )) {
         if (-not (Has-Value $Metadata $RequiredField)) {
             Add-Failure "Session metadata is missing $RequiredField."
@@ -207,6 +208,10 @@ if ($null -ne $Metadata) {
     }
     if (-not (Test-BooleanTrue (Get-PropertyValue $Metadata "portableStartupConfirmed") `
             "portableStartupConfirmed" "Session metadata")) {
+        # The helper already recorded the actionable failure.
+    }
+    if (-not (Test-BooleanTrue (Get-PropertyValue $Metadata "routeResetRestartConfirmed") `
+            "routeResetRestartConfirmed" "Session metadata")) {
         # The helper already recorded the actionable failure.
     }
 
@@ -360,6 +365,58 @@ if ($EndpointInventory.Count -gt 0) {
     }
     if ($InventoryLower -notmatch 'realtek|high definition|built[- ]in|onboard|bluetooth|hdmi|displayport|virtual|loopback|cable|voicemeeter') {
         Add-Failure "Audio endpoint inventory contains no built-in or virtual endpoint to exercise exclusion filtering."
+    }
+}
+
+# The packaged-app check is intentionally manual: calibration requires a real
+# microphone/loudspeaker path and its UI/device lifecycle cannot be proven by
+# the native protocol-only route matrix.
+$RouteResetEvidence = $null
+if (-not (Test-Path -LiteralPath $RouteResetPath -PathType Leaf)) {
+    Add-Failure "Route reset/restart evidence is missing: $RouteResetPath"
+} else {
+    try {
+        $RouteResetEvidence = Get-Content -LiteralPath $RouteResetPath -Raw | ConvertFrom-Json
+    } catch {
+        Add-Failure "Route reset/restart evidence is not valid JSON: $RouteResetPath"
+    }
+}
+if ($null -ne $RouteResetEvidence) {
+    foreach ($RequiredRouteResetField in @(
+        "capturedAt", "tester", "resetRoute", "retainedRoute",
+        "twoMappedRoutesBaselineSaved", "resetRouteNeedsCalibration",
+        "retainedRouteRemainedCalibratedAfterReset", "appClosedBeforeRestart", "appRestarted",
+        "resetRouteNeedsCalibrationAfterRestart", "resetRouteRecalibrated",
+        "retainedRouteRemainedCalibratedAfterRestart",
+        "retainedRouteUnchangedAfterRecalibration"
+    )) {
+        if ($null -eq $RouteResetEvidence.PSObject.Properties[$RequiredRouteResetField]) {
+            Add-Failure "Route reset/restart evidence is missing $RequiredRouteResetField."
+        }
+    }
+    if ([string](Get-PropertyValue $RouteResetEvidence "status") -ne "pass") {
+        Add-Failure "Route reset/restart evidence status is '$($RouteResetEvidence.status)'; expected pass."
+    }
+    $ResetRouteValue = 0.0
+    $RetainedRouteValue = 0.0
+    if (Convert-ToDouble (Get-PropertyValue $RouteResetEvidence "resetRoute") `
+            "resetRoute" "Route reset/restart evidence" ([ref]$ResetRouteValue) -and
+        Convert-ToDouble (Get-PropertyValue $RouteResetEvidence "retainedRoute") `
+            "retainedRoute" "Route reset/restart evidence" ([ref]$RetainedRouteValue)) {
+        if ($ResetRouteValue -notin @(1, 2, 3, 4) -or $RetainedRouteValue -notin @(1, 2, 3, 4) -or
+            $ResetRouteValue -eq $RetainedRouteValue) {
+            Add-Failure "Route reset/restart evidence must name two different routes from 1 through 4."
+        }
+    }
+    foreach ($RouteResetField in @(
+        "twoMappedRoutesBaselineSaved", "resetRouteNeedsCalibration",
+        "retainedRouteRemainedCalibratedAfterReset", "appClosedBeforeRestart", "appRestarted",
+        "resetRouteNeedsCalibrationAfterRestart", "resetRouteRecalibrated",
+        "retainedRouteRemainedCalibratedAfterRestart",
+        "retainedRouteUnchangedAfterRecalibration"
+    )) {
+        [void](Test-BooleanTrue (Get-PropertyValue $RouteResetEvidence $RouteResetField) `
+            $RouteResetField "Route reset/restart evidence")
     }
 }
 
@@ -577,6 +634,9 @@ if (-not (Test-Path -LiteralPath $ResultsPath -PathType Leaf)) {
     Add-Failure "Hardware session results are missing: $ResultsPath"
 } else {
     $ResultsText = Get-Content -LiteralPath $ResultsPath -Raw
+    if ($ResultsText -notmatch '(?im)^\s*Route reset/restart:\s*PASS\b') {
+        Add-Failure "Hardware session results do not confirm the route reset/restart check."
+    }
     if ($ResultsText -notmatch '(?im)^\s*Measured delay:\s*\S+') {
         Add-Failure "Hardware session results are missing a measured delay value."
     }

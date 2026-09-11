@@ -234,6 +234,7 @@ public:
     void prepare(double newSampleRate) noexcept {
         sampleRate = std::max(8000.0, newSampleRate);
         reset();
+        clearBaseline();
     }
     void clearBaseline() noexcept {
         for (std::size_t i = 0; i < analyzerBins; ++i) {

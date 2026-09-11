@@ -156,7 +156,7 @@ int main() {
     // A lower-level feedback tone should engage below the old 12 dB speech
     // gate while still passing the tonal and persistence checks.
     werfeed::FeedbackProcessor quietFeedback;
-    quietFeedback.prepare(rate); quietFeedback.clearBaseline(); quietFeedback.setEnabled(true);
+    quietFeedback.prepare(rate); quietFeedback.setEnabled(true);
     int firstEngagedSample = -1;
     for (int i = 0; i < 144000; ++i) {
         processSample(quietFeedback, 0.006f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f));

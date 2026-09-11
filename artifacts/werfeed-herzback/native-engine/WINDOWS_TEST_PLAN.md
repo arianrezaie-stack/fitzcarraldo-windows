@@ -59,9 +59,36 @@ regression.
    a different output silently.
 3. Confirm calibration detects the impulse, measures a plausible stable delay
    (three runs within two samples), covers 20 Hz through the device Nyquist
-   limit, and reloads the same baseline after restarting the app.
+   limit, and reloads the same baseline after restarting the app. The packaged
+   app restart sequence below is the required route-specific evidence; do not
+   substitute the native persistence unit test for this physical check.
 4. Confirm silence/noise below the correlation threshold fails calibration and
    does not overwrite the last valid baseline.
+
+### Route reset and packaged-app restart
+
+The hardware session script pauses for this UI/device-lifecycle check after
+the packaged app startup check. It writes
+`route-reset-restart-<backend>.json` and the evidence validator requires this
+file to report `pass`.
+
+1. In the open packaged app, select the exact shared input/output interface
+   and map two mono routes. Calibrate both routes. Verify both route cards say
+   `baseline saved`.
+2. In the calibration panel, select only one of those routes and choose
+   `Reset Route N`. Verify that route says `needs calibration` and the other
+   route still says `baseline saved`.
+3. Close the packaged app completely. Confirm the process has exited before
+   allowing the script to reopen it.
+4. After the app reopens, select the same mapped routes if needed. Verify the
+   reset route still says `needs calibration` and the other route still says
+   `baseline saved`.
+5. Recalibrate only the reset route. Verify it returns to `baseline saved` and
+   the other route remains `baseline saved` with its prior measurement.
+
+Answer every prompt in `windows-hardware-session.ps1` from the visible route
+cards, not from the calibration JSON file. A `pass` requires the reset route
+and retained route numbers to be different and every checkpoint to be `yes`.
 
 ## Acoustic stability
 
