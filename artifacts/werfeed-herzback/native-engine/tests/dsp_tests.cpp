@@ -125,7 +125,7 @@ int main() {
     const auto snapshot = processor.snapshot();
     assert(snapshot.activeNotches > 0);
     assert(snapshot.activeNotches <= static_cast<int>(werfeed::maxNotches));
-    assert(snapshot.maximumCutDb >= -20.1f && snapshot.maximumCutDb <= -19.4f);
+    assert(snapshot.maximumCutDb >= -24.1f && snapshot.maximumCutDb <= -23.4f);
     const auto active = *std::min_element(snapshot.notches.begin(), snapshot.notches.end(),
         [](const werfeed::NotchSnapshot& a, const werfeed::NotchSnapshot& b) {
             const auto aDistance = a.active ? std::abs(std::log2(a.frequency / 1000.0f)) : 1000.0f;
@@ -175,18 +175,18 @@ int main() {
             processSample(releaseTone, 0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
         const auto releaseSnapshot = releaseTone.snapshot();
         assert(releaseSnapshot.activeNotches == 1);
-        assert(releaseSnapshot.maximumCutDb <= -19.4f);
+        assert(releaseSnapshot.maximumCutDb <= -23.4f);
         assert(std::any_of(releaseSnapshot.notches.begin(), releaseSnapshot.notches.end(),
             [frequency](const werfeed::NotchSnapshot& notch) {
                 return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.02f
                     && notch.q < 10.0f;
             }));
-        for (int i = 0; i < 48000; ++i) processSample(releaseTone, 0.0f);
+        for (int i = 0; i < 96000; ++i) processSample(releaseTone, 0.0f);
         assert(releaseTone.snapshot().activeNotches == 1);
-        for (int i = 0; i < 180000; ++i) processSample(releaseTone, 0.0f);
+        for (int i = 0; i < 300000; ++i) processSample(releaseTone, 0.0f);
         assert(releaseTone.snapshot().activeNotches == 0);
     }
-    // The new speech scale reaches the former -12 dB maximum at 70%.
+    // The speech scale reaches -14 dB at 70% and -24 dB at full depth.
     werfeed::FeedbackProcessor seventyPercent;
     seventyPercent.prepare(rate); seventyPercent.setBaseline(baseline);
     seventyPercent.setEnabled(true); seventyPercent.setSuppressionAmount(0.7f);
@@ -194,8 +194,8 @@ int main() {
         processSample(seventyPercent, 0.3f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
     const auto seventySnapshot = seventyPercent.snapshot();
-    assert(seventySnapshot.maximumCutDb >= -12.1f &&
-           seventySnapshot.maximumCutDb <= -11.5f);
+    assert(seventySnapshot.maximumCutDb >= -14.1f &&
+           seventySnapshot.maximumCutDb <= -13.4f);
     // The upper 30% of Speech lowers the threshold beyond the former maximum.
     werfeed::FeedbackProcessor thresholdAtSeventy;
     thresholdAtSeventy.prepare(rate); thresholdAtSeventy.clearBaseline();
@@ -211,6 +211,23 @@ int main() {
     }
     assert(thresholdAtSeventy.snapshot().activeNotches == 0);
     assert(thresholdAtHundred.snapshot().activeNotches > 0);
+
+    // Above 1 kHz, the same borderline tone should cross the lower
+    // frequency-weighted gate sooner.
+    werfeed::FeedbackProcessor lowFrequency;
+    lowFrequency.prepare(rate); lowFrequency.clearBaseline();
+    lowFrequency.setEnabled(true); lowFrequency.setSuppressionAmount(0.5f);
+    werfeed::FeedbackProcessor highFrequency;
+    highFrequency.prepare(rate); highFrequency.clearBaseline();
+    highFrequency.setEnabled(true); highFrequency.setSuppressionAmount(0.5f);
+    for (int i = 0; i < 96000; ++i) {
+        processSample(lowFrequency, 0.0035f * std::sin(
+            2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
+        processSample(highFrequency, 0.0035f * std::sin(
+            2.0f * werfeed::pi * 4000.0f * i / 48000.0f));
+    }
+    assert(lowFrequency.snapshot().activeNotches == 0);
+    assert(highFrequency.snapshot().activeNotches > 0);
 
     // A calibrated resonance remains protected longer than an ordinary tone.
     constexpr float hotspotFrequency = 1000.0f;
@@ -230,6 +247,8 @@ int main() {
             2.0f * werfeed::pi * hotspotFrequency * i / 48000.0f));
     assert(calibratedHotspot.snapshot().activeNotches > 0);
     for (int i = 0; i < 24000; ++i) processSample(calibratedHotspot, 0.0f);
+    assert(calibratedHotspot.snapshot().activeNotches > 0);
+    for (int i = 0; i < 240000; ++i) processSample(calibratedHotspot, 0.0f);
     assert(calibratedHotspot.snapshot().activeNotches > 0);
     for (int i = 0; i < 240000; ++i) processSample(calibratedHotspot, 0.0f);
     assert(calibratedHotspot.snapshot().activeNotches == 0);
