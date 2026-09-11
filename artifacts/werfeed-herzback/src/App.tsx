@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, RotateCcw, SlidersHorizontal, Timer, Volume2, Waves, X, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, AudioLines, BarChart3, CircleHelp, Gauge, LockKeyhole, Mic2, MoreHorizontal, Power, Radio, RefreshCw, RotateCcw, SlidersHorizontal, Timer, Volume2, Waves, X, Zap } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -127,8 +127,11 @@ function AudioMappingPanel({
   nativeBridgeAvailable,
   nativeReady,
   audioRunning,
+  restartAvailable,
+  restartingAudio,
   onInputChange,
   onOutputChange,
+  onRestartAudio,
   sharedDescription,
   buffer,
   onBufferChange,
@@ -140,8 +143,11 @@ function AudioMappingPanel({
   nativeBridgeAvailable: boolean;
   nativeReady: boolean;
   audioRunning: boolean;
+  restartAvailable: boolean;
+  restartingAudio: boolean;
   onInputChange: (key: string) => void;
   onOutputChange: (key: string) => void;
+  onRestartAudio: () => void;
   sharedDescription: string;
   buffer: string;
   onBufferChange: (value: string) => void;
@@ -160,8 +166,9 @@ function AudioMappingPanel({
     </div>
     <div className="detail-row"><span>Shared interface basis</span><strong>{sharedDescription}</strong></div>
     <div className="detail-row"><span>Requested buffer</span><select value={buffer} disabled={!nativeReady} onChange={(event) => onBufferChange(event.target.value)}><option value="32">32 samples</option><option value="64">64 samples</option><option value="128">128 samples</option></select></div>
-    <div className="detail-row"><span>Engine state</span><strong>{audioRunning ? 'running · bypassed until armed' : nativeReady ? 'connected · waiting for mappings' : 'unavailable'}</strong></div>
-    <p className="section-note">The native engine receives the exact device names and channel indices selected here. The application starts automatically after every armed route has a complete mapping.</p>
+    <div className="detail-row"><span>Engine state</span><strong>{restartingAudio ? 'restarting selected audio connection…' : audioRunning ? 'running · bypassed until armed' : nativeReady ? 'connected · waiting for mappings' : 'unavailable'}</strong></div>
+    <button type="button" className="restart-audio-button" disabled={!restartAvailable || restartingAudio} onClick={onRestartAudio}><RefreshCw size={14} /> {restartingAudio ? 'Restarting audio engine…' : 'Restart audio engine'}</button>
+    <p className="section-note">The native engine receives the exact device names and channel indices selected here. Standby routes send no audio but remain selectable and mappable. Restart reopens the selected backend and interface without closing the app.</p>
   </div>;
 }
 
@@ -181,6 +188,7 @@ function Home() {
   const [buffer, setBuffer] = useState('128');
   const [message, setMessage] = useState('');
   const [pendingStart, setPendingStart] = useState(false);
+  const [restartingAudio, setRestartingAudio] = useState(false);
   const [preset, setPreset] = useState<'speech' | 'music'>('speech');
   const [activeRoute, setActiveRoute] = useState(0);
   const [calibrations, setCalibrations] = useState<Record<number, CalibrationRecord>>({});
@@ -239,6 +247,8 @@ function Home() {
   const outputOptions = useMemo(() => channelOptions.filter((option) => option.direction === 'output'), [channelOptions]);
   const nativeReady = !!bridge && engineStatus.state === 'running';
   const audioRunning = audioState.running ?? telemetry.running ?? false;
+  const restartAvailable = nativeReady && (audioRunning
+    || ['configured', 'stopped', 'device_stopped'].includes(audioState.phase ?? ''));
   const rate = telemetry.sampleRate ?? audioState.sampleRate;
   const actualBuffer = telemetry.bufferSize ?? audioState.bufferSize;
   const latency = rate && actualBuffer ? (actualBuffer * 2 / rate) * 1000 : undefined;
@@ -304,6 +314,7 @@ function Home() {
         const state = payload as AudioState & { type: string };
         setAudioState({ phase: state.phase, running: state.running, sampleRate: state.sampleRate, bufferSize: state.bufferSize });
         if (typeof state.running === 'boolean') setTelemetry((current) => ({ ...current, running: state.running }));
+        if (state.phase === 'started') setRestartingAudio(false);
         if (state.phase === 'configured' && pendingStart) {
           setPendingStart(false);
           void bridge.command('start').catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to start native audio'));
@@ -335,7 +346,10 @@ function Home() {
           showToast(`Route ${route} calibration reset · ready for a new measurement`);
         }
       }
-      if (payload.type === 'error') showToast(String(payload.message ?? 'Native engine error'));
+      if (payload.type === 'error') {
+        setRestartingAudio(false);
+        showToast(String(payload.message ?? 'Native engine error'));
+      }
     };
     const removeStatus = bridge.onStatus((status) => setEngineStatus(status));
     const removeEvent = bridge.onEvent(handleEvent);
@@ -464,9 +478,9 @@ function Home() {
       .catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to start calibration'));
   };
   useEffect(() => {
-    if (!nativeReady || audioRunning || pendingStart || pendingCalibrationRoute !== null || !autoStartReady) return;
+    if (!nativeReady || audioRunning || pendingStart || restartingAudio || pendingCalibrationRoute !== null || !autoStartReady) return;
     configureAndStart();
-  }, [nativeReady, audioRunning, pendingStart, pendingCalibrationRoute, autoStartReady]);
+  }, [nativeReady, audioRunning, pendingStart, restartingAudio, pendingCalibrationRoute, autoStartReady]);
   useEffect(() => {
     if (pendingCalibrationRoute === null || !nativeReady || telemetry.calibrating) return;
     if (pendingCalibrationRestart) {
@@ -491,6 +505,14 @@ function Home() {
     if (!bridge || !nativeReady) return;
     setPreset(nextPreset);
     void bridge.command('set_protection', { enabled, preset: nextPreset }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to change protection'));
+  };
+  const restartAudio = () => {
+    if (!bridge || !restartAvailable || restartingAudio) return;
+    setRestartingAudio(true);
+    void bridge.command('restart_audio').catch((error: unknown) => {
+      setRestartingAudio(false);
+      showToast(error instanceof Error ? error.message : 'Unable to restart audio engine');
+    });
   };
   const setSuppression = (value: number) => {
     const nextValue = Math.max(0, Math.min(1, value));
@@ -536,10 +558,10 @@ function Home() {
       </div>
     </header>
     <main className="main-content section-stack">
-       <AudioMappingPanel activeRoute={activeRoute} route={activeRouteState} inputOptions={activeInputOptions} outputOptions={activeOutputOptions} nativeBridgeAvailable={!!bridge} nativeReady={nativeReady} audioRunning={audioRunning} onInputChange={(key) => updateActiveRouteChannel('input', key)} onOutputChange={(key) => updateActiveRouteChannel('output', key)} sharedDescription={sharedCompatibilityKey && sharedInputOption ? `${backendLabel(sharedInputOption.deviceType)} · ${sharedInputOption.interfaceName}` : mappingCompatibilityKey ? 'Other routes limited to the selected interface' : !bridge ? 'Open the Windows desktop app to access native audio devices' : inputOptions.length && outputOptions.length ? 'Choose an input and output on a route to lock the shared clock' : devicesReported ? 'Windows reported no input/output endpoints for the compiled audio backends' : 'Waiting for native interface discovery'} buffer={buffer} onBufferChange={(value) => { stopAudioForEdit(); setBuffer(value); }} />
+       <AudioMappingPanel activeRoute={activeRoute} route={activeRouteState} inputOptions={activeInputOptions} outputOptions={activeOutputOptions} nativeBridgeAvailable={!!bridge} nativeReady={nativeReady} audioRunning={audioRunning} restartAvailable={restartAvailable} restartingAudio={restartingAudio} onInputChange={(key) => updateActiveRouteChannel('input', key)} onOutputChange={(key) => updateActiveRouteChannel('output', key)} onRestartAudio={restartAudio} sharedDescription={sharedCompatibilityKey && sharedInputOption ? `${backendLabel(sharedInputOption.deviceType)} · ${sharedInputOption.interfaceName}` : mappingCompatibilityKey ? 'Other routes limited to the selected interface' : !bridge ? 'Open the Windows desktop app to access native audio devices' : inputOptions.length && outputOptions.length ? 'Choose an input and output on a route to lock the shared clock' : devicesReported ? 'Windows reported no input/output endpoints for the compiled audio backends' : 'Waiting for native interface discovery'} buffer={buffer} onBufferChange={(value) => { stopAudioForEdit(); setBuffer(value); }} />
       <section className="panel routing-panel">
         <div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> mono routing</div><h3 className="section-title">Four simultaneous routes</h3><p className="section-note">Choose a route to edit its mapping above. The first selected interface limits every other route so all armed paths share one hardware clock.</p></div></div>
-         <div className="route-grid">{routes.map((route) => { const routeInfo = telemetry.routeTelemetry?.find((item) => item.route === route.id); const calibrated = routeInfo?.calibrated || Boolean(calibrations[route.id]); const selection = routeSelection(route); return <div className={`route-card ${route.id === activeRoute + 1 ? 'selected' : ''} ${route.enabled ? '' : 'muted'}`} key={route.id}><button type="button" className="route-card-top" disabled={!nativeReady} onClick={() => setActiveRoute(route.id - 1)} aria-pressed={route.id === activeRoute + 1}><span className={`route-dot ${route.enabled ? 'locked' : ''}`} /><span className="channel">ROUTE {route.id}</span><span className="route-select-label">{route.id === activeRoute + 1 ? 'viewing' : 'select'}</span></button><div className="route-name">Route {route.id} mono bus pair</div><RouteMappingSummary input={selection.input} output={selection.output} /><div className="route-meta"><span>{route.enabled ? 'armed path' : 'standby'}</span><label className="route-arm"><input type="checkbox" checked={route.enabled} disabled={!nativeReady} onChange={() => { stopAudioForEdit(); setRoutes((items) => items.map((item) => item.id === route.id ? { ...item, enabled: !item.enabled } : item)); }} /><span>arm</span></label></div><div className="route-card-bottom"><span>{route.enabled ? 'processing' : 'disabled'}</span><span>{calibrated ? 'baseline saved' : 'needs calibration'}</span></div></div>; })}</div>
+          <div className="route-grid">{routes.map((route) => { const routeInfo = telemetry.routeTelemetry?.find((item) => item.route === route.id); const calibrated = routeInfo?.calibrated || Boolean(calibrations[route.id]); const selection = routeSelection(route); return <div className={`route-card ${route.id === activeRoute + 1 ? 'selected' : ''} ${route.enabled ? '' : 'muted'}`} key={route.id}><button type="button" className="route-card-top" disabled={!nativeReady} onClick={() => setActiveRoute(route.id - 1)} aria-pressed={route.id === activeRoute + 1}><span className={`route-dot ${route.enabled ? 'locked' : ''}`} /><span className="channel">ROUTE {route.id}</span><span className="route-select-label">{route.id === activeRoute + 1 ? 'viewing' : 'select'}</span></button><div className="route-name">Route {route.id} mono bus pair</div><RouteMappingSummary input={selection.input} output={selection.output} /><div className="route-meta"><span>{route.enabled ? 'armed path' : 'standby · mappable'}</span><label className="route-arm"><input type="checkbox" checked={route.enabled} disabled={!nativeReady} onChange={() => { stopAudioForEdit(); setRoutes((items) => items.map((item) => item.id === route.id ? { ...item, enabled: !item.enabled } : item)); }} /><span>arm</span></label></div><div className="route-card-bottom"><span>{route.enabled ? 'processing' : 'no audio I/O'}</span><span>{calibrated ? 'baseline saved' : 'needs calibration'}</span></div></div>; })}</div>
       </section>
       <section className="panel calibration-panel">
         <div className="panel-heading"><div><div className="section-kicker"><BarChart3 size={14} /> calibration</div><h3 className="section-title">Measure one route at a time</h3><p className="section-note">Calibration plays the safety announcement, one second of silence, then the impulse and logarithmic sweep on the selected route.</p></div><Badge tone={telemetry.calibrating ? 'amber' : 'quiet'}>{telemetry.calibrating ? 'sweep in progress' : activeCalibration ? 'baseline saved' : 'ready when audio is mapped'}</Badge></div>

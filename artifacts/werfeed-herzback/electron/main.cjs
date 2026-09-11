@@ -9,6 +9,7 @@ const ENGINE_COMMANDS = new Set([
   'configure',
   'start',
   'stop',
+   'restart_audio',
   'set_protection',
   'start_calibration',
    'reset_calibration',

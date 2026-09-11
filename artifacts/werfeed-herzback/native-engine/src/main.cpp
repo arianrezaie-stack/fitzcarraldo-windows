@@ -100,20 +100,12 @@ public:
         if (!parseRoutes(command.getProperty("routes"), inChannels, outChannels)) return;
         const auto result = manager.initialise(inChannels, outChannels, nullptr, true, {}, &setup);
         if (result.isNotEmpty()) { error(result); return; }
+        configuredDeviceType = typeName;
+        configuredSetup = setup;
+        configuredInputChannels = inChannels;
+        configuredOutputChannels = outChannels;
         routeBaseKey = typeName + "|" + inputName + "|" + outputName;
-        {
-            const std::lock_guard<std::mutex> processorGuard(processorMutex);
-            for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
-                auto& processor = processors[static_cast<std::size_t>(routeIndex)];
-                processor.prepare(manager.getCurrentAudioDevice()->getCurrentSampleRate());
-                processor.setSuppressionAmount(routeSuppression[static_cast<std::size_t>(routeIndex)]);
-                processor.setPreset(protectionPreset.load(std::memory_order_relaxed));
-                processor.setEnabled(protectionEnabled.load(std::memory_order_relaxed));
-                processor.clearBaseline();
-                const auto found = baselines.find(keyForRoute(routeIndex));
-                if (found != baselines.end()) processor.setCalibrationProfile(found->second.responseDb);
-            }
-        }
+        prepareProcessorsForCurrentDevice();
         configured.store(true);
         emitState("configured");
     }
@@ -130,6 +122,45 @@ public:
         if (callbackRegistered.exchange(false)) manager.removeAudioCallback(this);
         cancelCalibration();
         emitState("stopped");
+    }
+
+    void restartAudio() {
+        const std::lock_guard<std::mutex> controlGuard(controlMutex);
+        if (!configured.load()) { error("configure an audio device before restarting"); return; }
+        if (calibrationBusy.load()) { error("wait for calibration finalization before restarting audio"); return; }
+
+        const auto wasRunning = running.exchange(false);
+        if (callbackRegistered.exchange(false)) manager.removeAudioCallback(this);
+        cancelCalibration();
+        manager.closeAudioDevice();
+        deviceActive.store(false);
+
+        manager.setCurrentAudioDeviceType(configuredDeviceType, true);
+        if (manager.getCurrentAudioDeviceType() != configuredDeviceType) {
+            configured.store(false);
+            error("selected audio backend is unavailable during restart");
+            return;
+        }
+
+        auto setup = configuredSetup;
+        const auto result = manager.initialise(
+            configuredInputChannels, configuredOutputChannels, nullptr, true, {}, &setup);
+        if (result.isNotEmpty()) {
+            configured.store(false);
+            error(juce::String("audio engine restart failed: ") + result);
+            return;
+        }
+        configuredSetup = setup;
+        prepareProcessorsForCurrentDevice();
+        configured.store(true);
+        if (wasRunning || configured.load()) {
+            callbackRegistered.store(true);
+            manager.addAudioCallback(this);
+            running.store(true);
+            emitState("started");
+        } else {
+            emitState("configured");
+        }
     }
     bool isRunning() const noexcept { return running.load(); }
 
@@ -525,6 +556,21 @@ private:
         int delaySamples = 0;
         std::array<float, werfeed::analyzerBins> responseDb {};
     };
+    void prepareProcessorsForCurrentDevice() {
+        auto* device = manager.getCurrentAudioDevice();
+        if (device == nullptr) return;
+        const std::lock_guard<std::mutex> processorGuard(processorMutex);
+        for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+            auto& processor = processors[static_cast<std::size_t>(routeIndex)];
+            processor.prepare(device->getCurrentSampleRate());
+            processor.setSuppressionAmount(routeSuppression[static_cast<std::size_t>(routeIndex)]);
+            processor.setPreset(protectionPreset.load(std::memory_order_relaxed));
+            processor.setEnabled(protectionEnabled.load(std::memory_order_relaxed));
+            processor.clearBaseline();
+            const auto found = baselines.find(keyForRoute(routeIndex));
+            if (found != baselines.end()) processor.setCalibrationProfile(found->second.responseDb);
+        }
+    }
     void loadCalibrations() {
         const auto parsed = juce::JSON::parse(calibrationFile);
         auto* root = parsed.getDynamicObject();
@@ -702,6 +748,9 @@ private:
     std::array<float, werfeed::maxRoutes> routeSuppression {};
     std::array<werfeed::FeedbackProcessor, werfeed::maxRoutes> processors {};
     int routeCount = 0; // only changed while callback is detached
+    juce::String configuredDeviceType;
+    juce::AudioDeviceManager::AudioDeviceSetup configuredSetup;
+    int configuredInputChannels = 0, configuredOutputChannels = 0;
     std::atomic_bool configured { false }, running { false };
     std::atomic<double> sampleRate { 0.0 }, cpu { 0.0 };
     std::atomic<double> clockJitterRatio { 0.0 }, clockJitterMs { 0.0 }, clockStability { 0.0 };
@@ -761,6 +810,7 @@ int main() {
         else if (name == "configure") engine.configure(*object);
         else if (name == "start") engine.start();
         else if (name == "stop") engine.stop();
+        else if (name == "restart_audio") engine.restartAudio();
         else if (name == "set_protection") engine.setProtection(*object);
         else if (name == "start_calibration") engine.startCalibration(*object);
         else if (name == "reset_calibration") engine.resetCalibration(*object);
