@@ -20,3 +20,15 @@ Serialize every protocol event with JUCE's `allOnOneLine=true`; the Electron rea
 **Why:** Pretty-printed JSON is valid as a document but invalid as a newline-delimited protocol message, causing the device event and command responses to be discarded line by line.
 
 **How to apply:** Treat one stdout line as exactly one complete JSON object and test the framing separately from the DSP.
+
+For background feedback analysis, use a single-producer/single-consumer sample handoff from the audio callback and publish notch targets as coherent per-slot snapshots. The callback may only pull bounded atomic state and run filters; processor reset/configuration must share a non-realtime mutex with the analyzer.
+
+**Why:** Moving FFT work off the callback removes its largest timing spikes, but independently published frequency/depth/Q values can tear across threads, and reset can race the analyzer during device reconfiguration.
+
+**How to apply:** Keep FFT/detection state background-owned, keep biquad state callback-owned, guard lifecycle/reset against the analyzer outside the callback, and validate both block-level DSP behavior and concurrent producer/consumer behavior.
+
+Uncalibrated mapped routes must use a virtual flat frequency baseline and remain fully eligible for basic suppression. Calibration is an optional enhancement that adds measured-room peak bias and longer hotspot treatment.
+
+**Why:** Users need immediate protection from any valid armed route without first emitting an audible calibration sweep; calibration should improve detection weighting, not unlock suppression.
+
+**How to apply:** Initialize every prepared processor with the flat baseline, replace it only when a valid route-specific calibration exists, and never gate suppression on calibration state.
