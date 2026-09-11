@@ -1,0 +1,55 @@
+build-windows: artifacts/werfeed-herzback/scripts/windows-release.ps1#L0
+Windows release failed during native engine tests: ctest exited with code 8.
+
+         Building Custom Rule D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/CMakeLists.txt
+       FinalizeBuildStatus:
+         Deleting file "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild".
+         Touching "x64\Release\ALL_BUILD\ALL_BUILD.tlog\ALL_BUILD.lastbuildstate".
+     1>Done Building Project "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\ALL_BUILD.vcxproj" (default targets).
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:01:39.24
+
+Internal ctest changing into directory: D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows
+Test project D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows
+    Start 1: routing-tests
+1/5 Test #1: routing-tests ....................   Passed    0.01 sec
+    Start 2: dsp-tests
+2/5 Test #2: dsp-tests ........................   Passed    7.00 sec
+    Start 3: notch-redistribution-tests
+3/5 Test #3: notch-redistribution-tests .......   Passed    0.01 sec
+    Start 4: device-policy-tests
+4/5 Test #4: device-policy-tests ..............   Passed    0.01 sec
+    Start 5: calibration-persistence-tests
+5/5 Test #5: calibration-persistence-tests ....Exit code 0xc0000409
+***Exception:   0.24 sec
+
+
+80% tests passed, 1 tests failed out of 5
+
+Total Test time (real) =   7.32 sec
+
+The following tests FAILED:
+	  5 - calibration-persistence-tests (Exit code 0xc0000409
+)
+Errors while running CTest
+
+         Touching "routing-tests.dir\Release\routing-tests.tlog\unsuccessfulbuild".
+     6>ClCompile:
+         juce_core_CompilationTime.cpp
+         Generating Code...
+     3>Link:
+         C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\Release\calibration-persistence-tests.exe" /INCREMENTAL:NO /NOLOGO /LIBPATH:"D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows/_deps/juce-src/modules/juce_core/libs/VisualStudio2022/x64/MDd" /LIBPATH:"D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows/_deps/juce-src/modules/juce_core/libs/VisualStudio2022/x64/MDd/Release" kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /PDB:"D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows/Release/calibration-persistence-tests.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows/Release/calibration-persistence-tests.lib" /MACHINE:X64  /machine:x64 "calibration-persistence-tests.dir\Release\calibration_persistence_tests.obj"
+         "calibration-persistence-tests.dir\Release\juce_core.obj"
+         "calibration-persistence-tests.dir\Release\juce_core_CompilationTime.obj"
+     7>CustomBuild:
+         Building Custom Rule D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/CMakeLists.txt
+     3>Link:
+         calibration-persistence-tests.vcxproj -> D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\Release\calibration-persistence-tests.exe
+       FinalizeBuildStatus:
+         Deleting file "calibration-persistence-tests.dir\Release\calibrat.5F19A5AE.tlog\unsuccessfulbuild".
+         Touching "calibration-persistence-tests.dir\Release\calibrat.5F19A5AE.tlog\calibration-persistence-tests.lastbuildstate".
+     3>Done Building Project "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\bu

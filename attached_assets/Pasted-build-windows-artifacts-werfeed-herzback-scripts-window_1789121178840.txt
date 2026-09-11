@@ -1,0 +1,61 @@
+build-windows: artifacts/werfeed-herzback/scripts/windows-release.ps1#L0
+Windows release failed during native engine tests: ctest exited with code 8.
+
+         Touching "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild".
+       CustomBuild:
+         Building Custom Rule D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/CMakeLists.txt
+       FinalizeBuildStatus:
+         Deleting file "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild".
+         Touching "x64\Release\ALL_BUILD\ALL_BUILD.tlog\ALL_BUILD.lastbuildstate".
+     1>Done Building Project "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\ALL_BUILD.vcxproj" (default targets).
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:01:11.49
+
+Internal ctest changing into directory: D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows
+Test project D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows
+    Start 1: routing-tests
+1/4 Test #1: routing-tests ....................   Passed    0.01 sec
+    Start 2: dsp-tests
+2/4 Test #2: dsp-tests ........................   Passed    5.26 sec
+    Start 3: device-policy-tests
+3/4 Test #3: device-policy-tests ..............   Passed    0.01 sec
+    Start 4: calibration-persistence-tests
+4/4 Test #4: calibration-persistence-tests ....Exit code 0xc0000409
+***Exception:   1.52 sec
+
+
+75% tests passed, 1 tests failed out of 4
+
+Total Test time (real) =   6.92 sec
+
+The following tests FAILED:
+	  4 - calibration-persistence-tests (Exit code 0xc0000409
+)
+Errors while running CTest
+
+     6>PrepareForBuild:
+         Creating directory "routing-tests.dir\Release\".
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+         Creating directory "routing-tests.dir\Release\routing-tests.tlog\".
+       InitializeBuildStatus:
+         Creating "routing-tests.dir\Release\routing-tests.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching "routing-tests.dir\Release\routing-tests.tlog\unsuccessfulbuild".
+       CustomBuild:
+         Building Custom Rule D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/CMakeLists.txt
+       ClCompile:
+         C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\CL.exe /c /I"D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src" /nologo /W1 /WX- /diagnostics:column /O2 /Ob2 /D _MBCS /D WIN32 /D _WINDOWS /D NDEBUG /D "CMAKE_INTDIR=\"Release\"" /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++20 /Fo"routing-tests.dir\Release\\" /Fd"routing-tests.dir\Release\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\tests\routing_tests.cpp"
+     4>Link:
+         device-policy-tests.vcxproj -> D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\Release\device-policy-tests.exe
+     6>ClCompile:
+         routing_tests.cpp
+     4>FinalizeBuildStatus:
+         Deleting file "device-policy-tests.dir\Release\device-p.EB731BBB.tlog\unsuccessfulbuild".
+         Touching "device-policy-tests.dir\Release\device-p.EB731BBB.tlog\device-policy-tests.lastbuildstate".
+     4>Done Building Project "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\device-policy-tests.vcxproj" (default targets).
+     1>Project "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\ALL_BUILD.vcxproj" (1) is building "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj" (7) on node 2 (default targets).
+     7>PrepareForBuild:
+         Creating directory "werfeed-native.dir\Release\".
