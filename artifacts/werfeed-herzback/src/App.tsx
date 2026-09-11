@@ -185,6 +185,8 @@ function Home() {
   const [activeRoute, setActiveRoute] = useState(0);
   const [calibrations, setCalibrations] = useState<Record<number, CalibrationRecord>>({});
   const [showCalibration, setShowCalibration] = useState(false);
+  const [pendingCalibrationRoute, setPendingCalibrationRoute] = useState<number | null>(null);
+  const [pendingCalibrationRestart, setPendingCalibrationRestart] = useState(false);
   const bypassInitialized = useRef(false);
 
   const pairs = useMemo<DevicePair[]>(() => {
@@ -270,6 +272,10 @@ function Home() {
     delayMs: activeRouteTelemetry.delayMs,
     responseDb: activeRouteTelemetry.calibrationResponseDb,
   } : undefined);
+  const activeRouteSelection = routeSelection(activeRouteState);
+  const activeRouteMapped = !!activeRouteSelection.input
+    && !!activeRouteSelection.output
+    && activeRouteSelection.input.compatibilityKey === activeRouteSelection.output.compatibilityKey;
   const activeSpectrum = activeRouteTelemetry?.spectrumDb ?? telemetry.spectrumDb;
   const activeNotches = activeRouteTelemetry?.notches ?? telemetry.notches;
   const clockScore = audioRunning && typeof telemetry.clockStability === 'number' ? Math.max(0, Math.min(1, telemetry.clockStability)) : undefined;
@@ -439,10 +445,31 @@ function Home() {
         && selection.input?.deviceName === first.input?.deviceName
         && selection.output?.deviceName === first.output?.deviceName);
     })();
+  const startCalibration = (routeIndex: number) => {
+    if (!bridge || !nativeReady || !audioRunning || telemetry.calibrating) return;
+    setPendingCalibrationRoute(null);
+    void bridge.command('start_calibration', { route: routeIndex, level: 0.06 })
+      .catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to start calibration'));
+  };
   useEffect(() => {
-    if (!nativeReady || audioRunning || pendingStart || !autoStartReady) return;
+    if (!nativeReady || audioRunning || pendingStart || pendingCalibrationRoute !== null || !autoStartReady) return;
     configureAndStart();
-  }, [nativeReady, audioRunning, pendingStart, autoStartReady]);
+  }, [nativeReady, audioRunning, pendingStart, pendingCalibrationRoute, autoStartReady]);
+  useEffect(() => {
+    if (pendingCalibrationRoute === null || !nativeReady || telemetry.calibrating) return;
+    if (pendingCalibrationRestart) {
+      if (audioRunning || pendingStart) return;
+      setPendingCalibrationRestart(false);
+      if (autoStartReady) configureAndStart();
+      return;
+    }
+    if (audioRunning) {
+      startCalibration(pendingCalibrationRoute);
+      return;
+    }
+    if (pendingStart || audioState.phase === 'configured' || !autoStartReady) return;
+    configureAndStart();
+  }, [pendingCalibrationRoute, pendingCalibrationRestart, nativeReady, telemetry.calibrating, audioRunning, pendingStart, audioState.phase, autoStartReady]);
   useEffect(() => {
     if (!nativeReady || bypassInitialized.current) return;
     bypassInitialized.current = true;
@@ -460,9 +487,19 @@ function Home() {
     void bridge.command('set_protection', { route: activeRoute, suppression: nextValue }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to change route suppression'));
   };
   const calibrate = () => {
-    if (!bridge || !nativeReady || !audioRunning || telemetry.calibrating) return;
+    if (!bridge || !nativeReady || telemetry.calibrating || !activeRouteMapped) return;
     const accepted = window.confirm('Calibration emits an audible impulse and sweep. Set speaker gain low, clear the room near the loudspeaker, and keep a physical mute ready. Start calibration?');
-    if (accepted) void bridge.command('start_calibration', { route: activeRoute, level: 0.06 }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to start calibration'));
+    if (!accepted) return;
+    if (!activeRouteState.enabled) {
+      setPendingCalibrationRoute(activeRoute);
+      setPendingCalibrationRestart(true);
+      stopAudioForEdit();
+      setRoutes((items) => items.map((route) => route.id === activeRoute + 1
+        ? { ...route, enabled: true }
+        : route));
+      return;
+    }
+    startCalibration(activeRoute);
   };
   const value = (number: number | undefined, digits = 1) => number === undefined ? '—' : number.toFixed(digits);
   const peakPercent = (peak: number | undefined) => peak === undefined ? undefined : peak * 100;
@@ -487,7 +524,7 @@ function Home() {
       </section>
       <section className="panel calibration-panel">
         <div className="panel-heading"><div><div className="section-kicker"><BarChart3 size={14} /> calibration</div><h3 className="section-title">Measure one route at a time</h3><p className="section-note">Calibration plays the safety announcement, one second of silence, then the impulse and logarithmic sweep on the selected route.</p></div><Badge tone={telemetry.calibrating ? 'amber' : 'quiet'}>{telemetry.calibrating ? 'sweep in progress' : activeCalibration ? 'baseline saved' : 'ready when audio is mapped'}</Badge></div>
-        <div className="calibration-controls"><label className="mapping-field"><span>Calibration route</span><select value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))}>{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}</option>)}</select></label><button type="button" className="plain-button footer-bypass" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteState?.enabled} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button></div>
+         <div className="calibration-controls"><label className="mapping-field"><span>Calibration route</span><select value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))}>{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}{!route.enabled ? ' · standby' : ''}</option>)}</select></label><button type="button" className="plain-button footer-bypass" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteMapped} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : !activeRouteState.enabled ? `Arm & calibrate Route ${activeRoute + 1}` : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button></div>
       </section>
       <section className="route-focus-stack">
         <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector stays baseline-relative and calibration-weighted while the engine runs bypassed or armed.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / 6 cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} /></section>
