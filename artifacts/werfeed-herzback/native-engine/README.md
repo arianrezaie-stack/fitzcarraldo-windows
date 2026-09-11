@@ -126,10 +126,16 @@ output, and limited to eight. The physical input/output device pair and
 backend are shared by the engine so all routes use one stable device clock;
 each route can independently select its input channel and output channel.
 While running, status events are capped at 10 Hz and expose actual device rate,
-buffer size, callback CPU fraction, callback clock stability and jitter, local
-deadline overruns, cumulative
-non-finite input/output sample counts, and input/output peaks. Each telemetry
-event also has a monotonically increasing sequence number. Device
+buffer size, callback CPU fraction, smoothed callback jitter and peak callback
+jitter, callback deadline misses, the driver's native xrun count, and cumulative
+non-finite input/output sample counts and input/output peaks. Each telemetry
+event also includes a long-window device-clock drift estimate in ppm, its
+measurement age, readiness, and source label. For WASAPI and ASIO this first
+implementation estimates the effective backend frame clock from delivered
+callback frames against the host's high-resolution steady clock; it does not
+claim direct access to the already-open backend's private IAudioClock or ASIO
+sample-position handle. Each telemetry event also has a monotonically
+increasing sequence number. Device
 configuration and route changes are deliberately rejected while running to keep
 callback memory immutable.
 All compiled backends are enumerated, but only eligible live-sound transports
@@ -148,8 +154,9 @@ display bins. The route suppression amount scales the maximum cut from 0 to
 -12 dB in both protection modes. Below 300 Hz, notch Q decreases progressively
 to widen the protection band for low-frequency room feedback.
 
-`xruns` is a local callback-deadline estimate, not a driver reported glitch
-counter. Hardware and acoustic tests must be performed on Windows with the
+`xruns` remains a backwards-compatible alias for callback deadline misses.
+`driverXruns` is the JUCE/backend-reported xrun count and may not be available
+for every driver. Hardware and acoustic tests must be performed on Windows with the
 intended microphones, outputs, room, and gain structure. Start at low gain,
 keep a physical mute available, and never calibrate with listeners near a
 loudspeaker. Audio callbacks do no allocation, locking, console IO, or JSON

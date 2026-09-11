@@ -366,9 +366,16 @@ public:
         sampleRate.store(device->getCurrentSampleRate());
         bufferSize.store(device->getCurrentBufferSizeSamples());
         callbackTimingInitialised = false;
-        clockJitterRatio.store(0.0, std::memory_order_relaxed);
-        clockJitterMs.store(0.0, std::memory_order_relaxed);
-        clockStability.store(0.0, std::memory_order_relaxed);
+        callbackJitterRatio.store(0.0, std::memory_order_relaxed);
+        callbackJitterMs.store(0.0, std::memory_order_relaxed);
+        callbackJitterPeakMs.store(0.0, std::memory_order_relaxed);
+        callbackDeadlineMisses.store(0, std::memory_order_relaxed);
+        driverXruns.store(0, std::memory_order_relaxed);
+        deviceClockDriftPpm.store(0.0, std::memory_order_relaxed);
+        deviceClockReady.store(false, std::memory_order_relaxed);
+        deviceClockAgeMs.store(0.0, std::memory_order_relaxed);
+        deviceClockMeasurementStarted = {};
+        deviceClockFrames = 0;
         const std::lock_guard<std::mutex> processorGuard(processorMutex);
         for (auto& processor : processors) processor.prepare(device->getCurrentSampleRate());
         deviceActive.store(true);
@@ -388,19 +395,41 @@ public:
         if (callbackTimingInitialised) {
             const auto interval = std::chrono::duration<double>(
                 begun - lastCallbackAt).count();
+            const auto jitterMs = std::abs(interval - expectedPeriod) * 1000.0;
             const auto jitterRatio = std::min(1.0,
                 std::abs(interval - expectedPeriod) / std::max(1.0e-6, expectedPeriod));
-            const auto smoothedRatio = clockJitterRatio.load(std::memory_order_relaxed) * 0.95
+            const auto smoothedRatio = callbackJitterRatio.load(std::memory_order_relaxed) * 0.95
                 + jitterRatio * 0.05;
-            clockJitterRatio.store(smoothedRatio, std::memory_order_relaxed);
-            clockJitterMs.store(smoothedRatio * expectedPeriod * 1000.0,
+            callbackJitterRatio.store(smoothedRatio, std::memory_order_relaxed);
+            callbackJitterMs.store(smoothedRatio * expectedPeriod * 1000.0,
                 std::memory_order_relaxed);
-            clockStability.store(1.0 - smoothedRatio, std::memory_order_relaxed);
+            const auto previousPeak = callbackJitterPeakMs.load(std::memory_order_relaxed);
+            if (jitterMs > previousPeak)
+                callbackJitterPeakMs.store(jitterMs, std::memory_order_relaxed);
         } else {
             callbackTimingInitialised = true;
-            clockStability.store(1.0, std::memory_order_relaxed);
+            deviceClockMeasurementStarted = begun;
         }
         lastCallbackAt = begun;
+        deviceClockFrames += static_cast<unsigned long long>(std::max(0, samples));
+        if (deviceClockMeasurementStarted != std::chrono::steady_clock::time_point {}) {
+            const auto clockAge = std::chrono::duration<double>(
+                begun - deviceClockMeasurementStarted).count();
+            deviceClockAgeMs.store(clockAge * 1000.0, std::memory_order_relaxed);
+            // A long-window frame-rate estimate filters callback scheduling
+            // noise and measures the effective backend clock against QPC-backed
+            // steady_clock. It is intentionally reported as an estimate until
+            // the already-open WASAPI/ASIO native clock handles are available
+            // through a backend-specific JUCE extension.
+            if (clockAge >= 2.0 && rate > 0.0) {
+                const auto observedRate = static_cast<double>(deviceClockFrames) / clockAge;
+                const auto driftPpm = (observedRate - rate) / rate * 1.0e6;
+                const auto smoothedDrift = deviceClockDriftPpm.load(
+                    std::memory_order_relaxed) * 0.9 + driftPpm * 0.1;
+                deviceClockDriftPpm.store(smoothedDrift, std::memory_order_relaxed);
+                deviceClockReady.store(true, std::memory_order_relaxed);
+            }
+        }
         for (int channel = 0; channel < outs; ++channel) std::fill_n(output[channel], samples, 0.0f);
         const auto calibrationActive = calibrating.load(std::memory_order_acquire);
         auto calibrationIndex = calibrationPosition.load(std::memory_order_relaxed);
@@ -459,7 +488,7 @@ public:
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begun).count();
         const auto budget = samples / sampleRate.load();
         cpu.store(budget > 0.0 ? elapsed / budget : 0.0, std::memory_order_relaxed);
-        if (elapsed > budget) xruns.fetch_add(1, std::memory_order_relaxed);
+         if (elapsed > budget) callbackDeadlineMisses.fetch_add(1, std::memory_order_relaxed);
     }
 
     void emitState(const char* phase) {
@@ -483,14 +512,27 @@ public:
 
     void emitTelemetry() {
         const std::lock_guard<std::mutex> controlGuard(controlMutex);
+        if (auto* device = manager.getCurrentAudioDevice())
+            driverXruns.store(static_cast<unsigned long long>(
+                std::max(0, device->getXRunCount())), std::memory_order_relaxed);
         auto* o = new juce::DynamicObject();
         o->setProperty("type", "telemetry");
         o->setProperty("telemetrySequence", static_cast<double>(telemetrySequence.fetch_add(1, std::memory_order_relaxed)));
         o->setProperty("running", running.load());
         o->setProperty("sampleRate", sampleRate.load()); o->setProperty("bufferSize", bufferSize.load());
-         o->setProperty("callbackCpu", cpu.load()); o->setProperty("xruns", static_cast<double>(xruns.load()));
-         o->setProperty("clockStability", clockStability.load());
-         o->setProperty("clockJitterMs", clockJitterMs.load());
+        o->setProperty("callbackCpu", cpu.load());
+        o->setProperty("xruns", static_cast<double>(
+            callbackDeadlineMisses.load(std::memory_order_relaxed)));
+        o->setProperty("callbackDeadlineMisses", static_cast<double>(
+            callbackDeadlineMisses.load(std::memory_order_relaxed)));
+        o->setProperty("driverXruns", static_cast<double>(
+            driverXruns.load(std::memory_order_relaxed)));
+        o->setProperty("callbackJitterMs", callbackJitterMs.load());
+        o->setProperty("callbackJitterPeakMs", callbackJitterPeakMs.load());
+        o->setProperty("deviceClockDriftPpm", deviceClockDriftPpm.load());
+        o->setProperty("deviceClockReady", deviceClockReady.load());
+        o->setProperty("deviceClockAgeMs", deviceClockAgeMs.load());
+        o->setProperty("clockMeasurementSource", clockMeasurementSource());
         o->setProperty("nonFiniteInputSamples", static_cast<double>(nonFiniteInputSamples.load()));
         o->setProperty("nonFiniteOutputSamples", static_cast<double>(nonFiniteOutputSamples.load()));
         o->setProperty("inputPeak", inputPeak.load()); o->setProperty("outputPeak", outputPeak.load());
@@ -859,9 +901,13 @@ private:
     int configuredInputChannels = 0, configuredOutputChannels = 0;
     std::atomic_bool configured { false }, running { false };
     std::atomic<double> sampleRate { 0.0 }, cpu { 0.0 };
-    std::atomic<double> clockJitterRatio { 0.0 }, clockJitterMs { 0.0 }, clockStability { 0.0 };
+    std::atomic<double> callbackJitterRatio { 0.0 }, callbackJitterMs { 0.0 };
+    std::atomic<double> callbackJitterPeakMs { 0.0 };
+    std::atomic<double> deviceClockDriftPpm { 0.0 }, deviceClockAgeMs { 0.0 };
     std::atomic<int> bufferSize { 0 };
-    std::atomic<unsigned long long> xruns { 0 }, nonFiniteInputSamples { 0 }, nonFiniteOutputSamples { 0 };
+    std::atomic<unsigned long long> callbackDeadlineMisses { 0 }, driverXruns { 0 };
+    std::atomic<unsigned long long> nonFiniteInputSamples { 0 }, nonFiniteOutputSamples { 0 };
+    std::atomic_bool deviceClockReady { false };
     std::atomic<unsigned long long> telemetrySequence { 0 };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
     std::atomic_bool protectionEnabled { false }, calibrating { false }, calibrationComplete { false };
@@ -881,7 +927,17 @@ private:
     std::mutex controlMutex;
     std::mutex processorMutex;
     std::chrono::steady_clock::time_point lastCallbackAt {};
+    std::chrono::steady_clock::time_point deviceClockMeasurementStarted {};
+    unsigned long long deviceClockFrames = 0;
     bool callbackTimingInitialised = false;
+
+    juce::String clockMeasurementSource() const {
+        const auto backend = configuredDeviceType.toLowerCase();
+        if (backend.contains("asio")) return "ASIO callback-frame estimate";
+        if (backend.contains("windows audio")) return "WASAPI callback-frame estimate";
+        if (backend.contains("directsound")) return "DirectSound callback-frame estimate";
+        return "backend callback-frame estimate";
+    }
 };
 
 } // namespace
