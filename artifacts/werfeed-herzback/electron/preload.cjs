@@ -5,6 +5,7 @@ const COMMANDS = new Set([
   'configure',
   'start',
   'stop',
+  'set_route_arming',
    'restart_audio',
   'set_protection',
   'start_calibration',

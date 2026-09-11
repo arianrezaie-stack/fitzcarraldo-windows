@@ -91,10 +91,10 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
   z-index: 0;
   inset: 0;
   background-image: var(--watermark-image);
-  background-position: right 7% top 86px;
-  background-size: min(787px, 68vw) auto;
+  background-position: center;
+  background-size: cover;
   background-repeat: no-repeat;
-  opacity: .22;
+  opacity: .24;
   mix-blend-mode: multiply;
   pointer-events: none;
 }
@@ -142,7 +142,7 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .main-content { padding-top: 24px; }
 .section-stack { display: flex; flex-direction: column; gap: 24px; }
 .hero-panel, .panel {
-  border: 1px solid var(--line); border-radius: 16px; background: rgba(48, 32, 25, .92);
+  border: 1px solid var(--line); border-radius: 16px; background: rgba(48, 32, 25, .86);
   box-shadow: 0 18px 50px rgba(12, 7, 4, .2);
 }
 .hero-panel { position: relative; overflow: hidden; padding: clamp(18px, 3vw, 30px); }
@@ -215,12 +215,12 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .content-grid { display: grid; grid-template-columns: 1fr; gap: 24px; margin-top: 24px; }
 .panel { padding: 19px; }
 .routing-panel, .calibration-panel, .telemetry-panel, .route-analyzer-panel, .route-protection-panel { min-width: 0; }
-.calibration-panel { background: linear-gradient(110deg, rgba(48, 32, 25, .96), rgba(57, 35, 25, .93)); }
+.calibration-panel { background: linear-gradient(110deg, rgba(48, 32, 25, .9), rgba(57, 35, 25, .87)); }
 .calibration-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
 .calibration-controls .mapping-field { width: min(300px, 100%); }
 .route-focus-stack { display: flex; flex-direction: column; gap: 24px; }
 .route-analyzer-panel .spectrum { height: 250px; }
-.route-protection-panel.is-bypassed { border-color: #84463d; background: linear-gradient(115deg, rgba(64, 31, 27, .96), rgba(49, 28, 23, .94)); }
+.route-protection-panel.is-bypassed { border-color: #84463d; background: linear-gradient(115deg, rgba(64, 31, 27, .9), rgba(49, 28, 23, .88)); }
 .route-protection-panel.is-bypassed .section-kicker svg { color: #df715f; }
 .telemetry-panel .metrics { margin-top: 0; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; margin-bottom: 17px; }
@@ -339,3 +339,75 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 @media (max-width: 980px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 760px) { .app-shell { padding-inline: 12px; }.header-meta { display: flex; gap: 8px; }.header-meta .session { display: none; }.header-bypass { padding-inline: 8px; }.hero-copy { align-items: stretch; flex-direction: column; }.hero-actions { width: 100%; }.action-button { flex: 1; justify-content: center; }.metrics { grid-template-columns: 1fr; }.route-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.mapping-controls { grid-template-columns: 1fr; }.panel-heading, .curve-toolbar { align-items: stretch; flex-direction: column; }.mode-switch { align-self: flex-start; }.control-strip { justify-content: flex-start; }.route-fader { align-items: stretch; flex-direction: column; }.fader-control { width: 100%; min-width: 100%; }.guard-card { display: block; }.guard-card-header { margin-bottom: 18px; }.guard-summary { border-top: 1px solid #80563e; border-left: 0; padding: 13px 0 0; }.footer-bar { align-items: flex-start; flex-direction: column; }.footer-actions { width: 100%; justify-content: space-between; } }
 @media (max-width: 470px) { .brand-title span { display: none; }.guard-card { display: block; }.guard-summary { border-top: 1px solid #80563e; border-left: 0; padding: 13px 0 0; }.route-grid { gap: 7px; }.route-card { padding: 10px; }.route-meta { display: block; line-height: 1.7; }.curve-section { overflow: hidden; }.control-strip { gap: 8px; }.spectrum { height: 180px; } }
+
+/* On a fullscreen landscape monitor, use the available width to keep the
+   complete control surface visible. Smaller and portrait viewports retain the
+   normal reading order and scrolling behavior above. */
+@media (min-width: 1500px) and (min-aspect-ratio: 16/9) {
+  html, body, #root { height: 100%; overflow: hidden; }
+  .app-shell {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    padding: 10px clamp(18px, 2.4vw, 42px) 48px;
+  }
+  .app-header, .main-content { width: min(1680px, 100%); }
+  .app-header { padding-bottom: 10px; }
+  .main-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1.06fr) minmax(0, .94fr);
+    grid-template-rows: auto auto auto;
+    gap: 22px;
+    padding-top: 12px;
+  }
+  .section-stack { gap: 22px; }
+  .main-content > .audio-mapping-panel { grid-column: 1; grid-row: 1; }
+  .main-content > .routing-panel { grid-column: 1; grid-row: 2; }
+  .main-content > .calibration-panel { grid-column: 1; grid-row: 3; }
+  .main-content > .route-focus-stack {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    gap: 22px;
+  }
+  .route-focus-stack .telemetry-panel {
+    margin-top: 0;
+  }
+  .main-content > .footer-bar {
+    position: fixed;
+    right: max(18px, calc((100vw - 1680px) / 2));
+    bottom: 8px;
+    left: max(18px, calc((100vw - 1680px) / 2));
+    z-index: 2;
+    margin: 0;
+  }
+  .panel, .hero-panel { border-radius: 12px; }
+  .panel { padding: 16px; }
+  .panel-heading { margin-bottom: 12px; }
+  .section-title { margin-top: 5px; font-size: 17px; }
+  .main-content > .calibration-panel .panel-heading > .status-pill {
+    min-width: 132px;
+    flex: 0 0 auto;
+    justify-content: center;
+    white-space: nowrap;
+  }
+  .section-note { font-size: 10px; line-height: 1.3; }
+  .mapping-controls { margin-top: 10px; }
+  .detail-row { margin-top: 7px; font-size: 10px; }
+  .restart-audio-button { margin-top: 8px; padding-block: 6px; }
+  .audio-mapping-panel > .section-note:last-child { margin-top: 6px; }
+  .route-grid { gap: 8px; }
+  .route-card { padding: 11px; }
+  .route-name { margin-top: 12px; }
+  .route-card-bottom { margin-top: 9px; padding-top: 8px; }
+  .calibration-controls { gap: 10px; }
+  .route-analyzer-panel .spectrum { height: 194px; }
+  .recurring-cut-alert { margin-top: 12px; font-size: 15px; }
+  .route-fader { gap: 14px; margin-top: 9px; padding: 10px 12px; }
+  .fader-control { min-width: min(300px, 42%); }
+  .telemetry-panel .metrics { gap: 8px; }
+  .metric { padding: 10px; }
+  .metric-value { margin-top: 4px; font-size: 21px; }
+  .meter { margin-top: 5px; }
+  .health-grid { margin-top: 9px; }
+  .footer-bar { padding-block: 7px; }
+}

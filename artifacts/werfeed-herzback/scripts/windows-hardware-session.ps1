@@ -28,6 +28,7 @@ $MetadataPath = Join-Path $EvidenceRoot "hardware-session-$SafeDeviceType-metada
 $EnumerationPath = Join-Path $EvidenceRoot "hardware-device-enumeration-$SafeDeviceType.jsonl"
 $EndpointInventoryPath = Join-Path $EvidenceRoot "audio-endpoint-inventory-$SafeDeviceType.json"
 $RouteStabilityPath = Join-Path $EvidenceRoot "route-stability-$SafeDeviceType.jsonl"
+$NotchRedistributionPath = Join-Path $EvidenceRoot "notch-redistribution-$SafeDeviceType.jsonl"
 $RouteResetPath = Join-Path $EvidenceRoot "route-reset-restart-$SafeDeviceType.json"
 $ValidationReportPath = Join-Path $EvidenceRoot "hardware-validation-$SafeDeviceType.txt"
 
@@ -38,7 +39,8 @@ if (-not (Test-Path $Engine)) {
 New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
 Remove-Item -Force -ErrorAction SilentlyContinue `
     $SessionLog, $Results, $MatrixPath, $MetadataPath, $EnumerationPath,
-    $EndpointInventoryPath, $RouteStabilityPath, $RouteResetPath, $ValidationReportPath
+    $EndpointInventoryPath, $RouteStabilityPath, $NotchRedistributionPath,
+    $RouteResetPath, $ValidationReportPath
 
 Write-Host "SAFETY: Set output gain to minimum and keep a physical mute within reach."
 $SafetyReady = Read-Host "Type READY when the test area is safe"
@@ -492,6 +494,81 @@ foreach ($TelemetryEvent in $StabilityTelemetry) {
     }
 }
 Add-Content $Results "Route stability: PASS ($RouteStabilityPath)"
+
+# Keep one native process open while arming and disarming the four mapped
+# routes. This is the live proof that released slots are redistributed without
+# a device restart, stale notch state, or a telemetry gap.
+$RedistributionConfigure = @{
+    type = "configure"
+    deviceType = $DeviceType
+    inputDevice = $InputDevice
+    outputDevice = $OutputDevice
+    sampleRate = 48000
+    bufferSize = 128
+    inputChannels = 4
+    outputChannels = 4
+    routes = @(
+        @{ input = 0; output = 0; enabled = $true; suppression = 0.75 }
+        @{ input = 1; output = 1; enabled = $true; suppression = 0.75 }
+        @{ input = 2; output = 2; enabled = $true; suppression = 0.75 }
+        @{ input = 3; output = 3; enabled = $true; suppression = 0.75 }
+    )
+} | ConvertTo-Json -Compress -Depth 5
+$RedistributionStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+$RedistributionStartInfo.FileName = $Engine
+$RedistributionStartInfo.UseShellExecute = $false
+$RedistributionStartInfo.CreateNoWindow = $true
+$RedistributionStartInfo.RedirectStandardInput = $true
+$RedistributionStartInfo.RedirectStandardOutput = $true
+$RedistributionStartInfo.RedirectStandardError = $true
+$RedistributionProcess = [System.Diagnostics.Process]::new()
+$RedistributionProcess.StartInfo = $RedistributionStartInfo
+if (-not $RedistributionProcess.Start()) {
+    throw "Unable to start the native engine for notch redistribution validation."
+}
+$RedistributionStdoutTask = $RedistributionProcess.StandardOutput.ReadToEndAsync()
+$RedistributionStderrTask = $RedistributionProcess.StandardError.ReadToEndAsync()
+$RedistributionProcess.StandardInput.WriteLine($RedistributionConfigure)
+$RedistributionProcess.StandardInput.WriteLine('{"type":"start"}')
+$RedistributionProcess.StandardInput.Flush()
+Start-Sleep -Seconds 2
+
+$RedistributionSteps = @(
+    @{ name = "four-active"; route = $null; enabled = $null }
+    @{ name = "three-active"; route = 3; enabled = $false }
+    @{ name = "two-active"; route = 2; enabled = $false }
+    @{ name = "one-active"; route = 1; enabled = $false }
+    @{ name = "two-active-restored"; route = 1; enabled = $true }
+    @{ name = "three-active-restored"; route = 2; enabled = $true }
+    @{ name = "four-active-restored"; route = 3; enabled = $true }
+)
+foreach ($Step in $RedistributionSteps) {
+    if ($null -ne $Step.route) {
+        $Command = @{
+            type = "set_route_arming"
+            route = $Step.route
+            enabled = $Step.enabled
+        } | ConvertTo-Json -Compress
+        $RedistributionProcess.StandardInput.WriteLine($Command)
+    }
+    $Marker = @{ type = "test_marker"; name = "notch-$($Step.name)" } | ConvertTo-Json -Compress
+    $RedistributionProcess.StandardInput.WriteLine($Marker)
+    $RedistributionProcess.StandardInput.Flush()
+    Start-Sleep -Seconds 2
+}
+$RedistributionProcess.StandardInput.WriteLine('{"type":"stop"}')
+$RedistributionProcess.StandardInput.Close()
+if (-not $RedistributionProcess.WaitForExit(10000)) {
+    $RedistributionProcess.Kill()
+    throw "Native engine did not exit after notch redistribution validation."
+}
+$RedistributionStdout = $RedistributionStdoutTask.Result
+$RedistributionStderr = $RedistributionStderrTask.Result
+Set-Content $NotchRedistributionPath $RedistributionStdout.TrimEnd()
+if ($RedistributionStderr) {
+    Add-Content $NotchRedistributionPath "# stderr: $($RedistributionStderr.TrimEnd())"
+}
+Add-Content $Results "Notch redistribution: PASS ($NotchRedistributionPath)"
 
 $Delay = Read-Host "Measured round-trip delay in milliseconds (enter N/A if calibration was not run)"
 

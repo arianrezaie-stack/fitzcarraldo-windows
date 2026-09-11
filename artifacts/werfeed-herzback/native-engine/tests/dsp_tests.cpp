@@ -35,6 +35,14 @@ float processSample(werfeed::FeedbackProcessor& processor, float input) {
 
 int main() {
     constexpr double rate = 48000.0;
+    static_assert(werfeed::sharedNotchCapacity(24, 4, 0) == 6);
+    static_assert(werfeed::sharedNotchCapacity(24, 3, 0) == 8);
+    static_assert(werfeed::sharedNotchCapacity(24, 2, 0) == 12);
+    static_assert(werfeed::sharedNotchCapacity(24, 1, 0) == 24);
+    static_assert(werfeed::sharedNotchCapacity(24, 0, 0) == 0);
+    static_assert(werfeed::sharedNotchCapacity(48, 8, 7) == 6);
+    static_assert(werfeed::sharedNotchCapacity(48, 5, 0) == 10);
+    static_assert(werfeed::sharedNotchCapacity(48, 5, 4) == 9);
     const auto sweep = werfeed::makeLogSweep(rate, 1.0);
     assert(sweep.size() == 48000);
     assert(*std::max_element(sweep.begin(), sweep.end()) <= 0.081f);
@@ -262,6 +270,47 @@ int main() {
     const auto twoToneSnapshot = twoTone.snapshot();
     assert(std::count_if(twoToneSnapshot.notches.begin(), twoToneSnapshot.notches.end(),
         [](const werfeed::NotchSnapshot& notch) { return notch.active; }) >= 2);
+
+    // A route that receives released capacity can hold more than the normal
+    // six simultaneous cuts without allocating on the realtime thread.
+    werfeed::FeedbackProcessor expanded;
+    expanded.prepare(rate); expanded.clearBaseline(); expanded.setEnabled(true);
+    expanded.setNotchCapacity(8);
+    constexpr std::array<float, 8> expandedFrequencies {
+        187.5f, 375.0f, 750.0f, 1500.0f,
+        3000.0f, 6000.0f, 9000.0f, 12000.0f,
+    };
+    for (int i = 0; i < 144000; ++i) {
+        float input = 0.0f;
+        for (const auto frequency : expandedFrequencies)
+            input += 0.035f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f);
+        processSample(expanded, input);
+    }
+    const auto expandedSnapshot = expanded.snapshot();
+    assert(expanded.getNotchCapacity() == 8);
+    assert(expandedSnapshot.activeNotches > 6);
+    assert(expandedSnapshot.activeNotches <= 8);
+
+    // A live route re-arm must not expose the previous route's cuts while
+    // capacity is being redistributed.
+    expanded.setNotchCapacity(12);
+    expanded.requestNotchReset();
+    expanded.pullPendingNotchUpdates();
+    expanded.pumpBackgroundAnalysis();
+    const auto rearmedSnapshot = expanded.snapshot();
+    assert(expanded.getNotchCapacity() == 12);
+    assert(rearmedSnapshot.activeNotches == 0);
+
+    werfeed::FeedbackProcessor limited;
+    limited.prepare(rate); limited.clearBaseline(); limited.setEnabled(true);
+    limited.setNotchCapacity(1);
+    for (int i = 0; i < 96000; ++i) {
+        const auto input =
+            0.15f * std::sin(2.0f * werfeed::pi * 750.0f * i / 48000.0f) +
+            0.15f * std::sin(2.0f * werfeed::pi * 3000.0f * i / 48000.0f);
+        processSample(limited, input);
+    }
+    assert(limited.snapshot().activeNotches == 1);
 
     // Bypass transitions remain continuous while wet filter history advances.
     float last = 0.0f;

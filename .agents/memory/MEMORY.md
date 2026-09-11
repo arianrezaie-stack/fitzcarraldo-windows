@@ -9,3 +9,4 @@
 - [Windows live-capture tooling](windows-live-capture.md) — this Linux workspace may lack CMake and PowerShell; physical endpoint validation belongs on Windows.
 - [Windows DSP test stack](windows-dsp-stack.md) — Windows release tests have smaller default stacks; keep large DSP handoff buffers off processor object stacks.
 - [Watermark asset blending](ui-watermark-assets.md) — import image assets through Vite and use multiply blending when white should remain neutral against a dark background.
+- [Dynamic notch pool](dynamic-notch-pool.md) — pool six slots per configured route and redistribute only among armed routes without reducing eight-route capacity.

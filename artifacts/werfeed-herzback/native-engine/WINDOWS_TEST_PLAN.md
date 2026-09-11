@@ -52,6 +52,15 @@ telemetry event, including the disabled slots. This is separate from the
 1-through-8 route matrix so a compacted route list cannot hide an indexing
 regression.
 
+The session also keeps one four-route native process running while it exercises
+route arming changes. The saved `notch-redistribution-*.jsonl` evidence must
+show capacities of `6,6,6,6`, then `8,8,8,0`, `12,12,0,0`, and
+`24,0,0,0`, followed by `12,12,0,0`, `8,8,8,0`, and `6,6,6,6` again.
+Each step must retain four route records, report `running: true`, keep active
+cuts within capacity, and report zero active cuts for disarmed routes. The
+validator also rejects engine errors, stop events, missing health telemetry,
+and non-finite callback CPU, xrun, peak, or clock readings.
+
 1. Run at 48 kHz with 64, 128, and 256-sample buffers for 30 minutes each.
    Record the smallest stable setting rather than assuming every endpoint
    accepts the requested buffer.

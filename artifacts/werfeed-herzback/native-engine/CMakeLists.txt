@@ -61,4 +61,13 @@ if (BUILD_TESTING)
   target_compile_features(device-policy-tests PRIVATE cxx_std_20)
   target_include_directories(device-policy-tests PRIVATE src)
   add_test(NAME device-policy-tests COMMAND device-policy-tests)
+  add_executable(calibration-persistence-tests tests/calibration_persistence_tests.cpp)
+  target_compile_features(calibration-persistence-tests PRIVATE cxx_std_20)
+  target_include_directories(calibration-persistence-tests PRIVATE src)
+  target_link_libraries(calibration-persistence-tests PRIVATE juce::juce_core)
+  target_compile_definitions(calibration-persistence-tests PRIVATE
+    JUCE_APPLICATION_NAME_STRING="Werfeed Calibration Persistence Tests"
+    JUCE_APPLICATION_VERSION_STRING="${PROJECT_VERSION}"
+    JUCE_USE_CURL=0)
+  add_test(NAME calibration-persistence-tests COMMAND calibration-persistence-tests)
 endif()

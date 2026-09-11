@@ -9,12 +9,13 @@ const ENGINE_COMMANDS = new Set([
   'configure',
   'start',
   'stop',
+  'set_route_arming',
    'restart_audio',
   'set_protection',
   'start_calibration',
    'reset_calibration',
 ]);
-const ENGINE_EVENTS = new Set(['hello', 'devices', 'state', 'telemetry', 'calibration', 'calibration_reset', 'error']);
+const ENGINE_EVENTS = new Set(['hello', 'devices', 'state', 'telemetry', 'calibration', 'calibration_reset', 'route_arming', 'error']);
 const MAX_LINE_BYTES = 1024 * 1024;
 const CALIBRATION_ANNOUNCEMENT = 'calibration-announcement.mp3';
 

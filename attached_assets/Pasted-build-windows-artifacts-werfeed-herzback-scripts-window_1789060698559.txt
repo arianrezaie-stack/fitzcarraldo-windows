@@ -1,0 +1,20 @@
+build-windows: artifacts/werfeed-herzback/scripts/windows-release.ps1#L0
+Windows release failed during native engine compilation: cmake exited with code 1.
+     6>D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(576,61): error C2039: 'getTotalNumInputChannels': is not a member of 'juce::AudioIODevice' [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+     6>D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(577,63): error C2039: 'getTotalNumOutputChannels': is not a member of 'juce::AudioIODevice' [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+     6>D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(576,20): error C2737: 'channelCount': const object must be initialized [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+     6>D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(582,24): error C3536: 'channelCount': cannot be used before it is initialized [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+         D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(576,61): error C2039: 'getTotalNumInputChannels': is not a member of 'juce::AudioIODevice' [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+         D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(577,63): error C2039: 'getTotalNumOutputChannels': is not a member of 'juce::AudioIODevice' [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+         D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(576,20): error C2737: 'channelCount': const object must be initialized [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+         D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(582,24): error C3536: 'channelCount': cannot be used before it is initialized [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+
+     6>D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(576,61): error C2039: 'getTotalNumInputChannels': is not a member of 'juce::AudioIODevice' [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+             D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\_deps\juce-src\modules\juce_audio_devices\audio_io\juce_AudioIODevice.h(162,17):
+             see declaration of 'juce::AudioIODevice'
+         
+     6>D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(577,63): error C2039: 'getTotalNumOutputChannels': is not a member of 'juce::AudioIODevice' [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\werfeed-native.vcxproj]
+             D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\_deps\juce-src\modules\juce_audio_devices\audio_io\juce_AudioIODevice.h(162,17):
+             see declaration of 'juce::AudioIODevice'
+         
+     6>D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src\main.cpp(576,20): error C2737: 'channelCount': const object must be initialized [D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\bui

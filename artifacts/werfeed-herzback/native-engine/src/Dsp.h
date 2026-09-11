@@ -15,7 +15,18 @@ namespace werfeed {
 
 constexpr float pi = 3.14159265358979323846f;
 constexpr std::size_t analyzerBins = 256;
-constexpr std::size_t maxNotches = 6;
+constexpr std::size_t maxNotches = 48;
+constexpr std::size_t defaultNotchesPerRoute = 6;
+
+constexpr std::size_t sharedNotchCapacity(std::size_t totalSlots,
+                                          std::size_t activeRoutes,
+                                          std::size_t activeOrdinal) noexcept {
+    if (activeRoutes == 0 || activeOrdinal >= activeRoutes) return 0;
+    const auto boundedSlots = std::min(maxNotches, totalSlots);
+    const auto base = boundedSlots / activeRoutes;
+    const auto remainder = boundedSlots % activeRoutes;
+    return base + (activeOrdinal < remainder ? 1 : 0);
+}
 
 enum class ProtectionPreset { speech, music };
 
@@ -273,6 +284,15 @@ public:
     }
     void setEnabled(bool value) noexcept { enabled.store(value, std::memory_order_relaxed); }
     bool isEnabled() const noexcept { return enabled.load(std::memory_order_relaxed); }
+    void setNotchCapacity(std::size_t value) noexcept {
+        notchCapacity.store(std::min(maxNotches, value), std::memory_order_release);
+    }
+    std::size_t getNotchCapacity() const noexcept {
+        return notchCapacity.load(std::memory_order_acquire);
+    }
+    void requestNotchReset() noexcept {
+        notchResetGeneration.fetch_add(1, std::memory_order_release);
+    }
     void setPreset(ProtectionPreset value) noexcept { preset.store(value, std::memory_order_relaxed); }
     void setSuppressionAmount(float value) noexcept {
         suppressionAmount.store(std::clamp(value, 0.0f, 1.0f), std::memory_order_relaxed);
@@ -298,7 +318,9 @@ public:
     float process(float sample) noexcept {
         if (!std::isfinite(sample)) return 0.0f;
         auto wet = sample;
-        for (auto& state : states) wet = state.process(wet);
+        const auto capacity = getNotchCapacity();
+        for (std::size_t i = 0; i < capacity; ++i)
+            wet = states[i].process(wet);
         if (!std::isfinite(wet)) wet = 0.0f;
         const auto targetMix = isEnabled() ? 1.0f : 0.0f;
         wetMix += (targetMix - wetMix) * 0.0015f;
@@ -310,7 +332,17 @@ public:
     // publishes complete target snapshots; the sequence check prevents the
     // callback from combining a new frequency with an old depth or Q.
     void pullPendingNotchUpdates() noexcept {
-        for (std::size_t i = 0; i < maxNotches; ++i) {
+        const auto requestedReset = notchResetGeneration.load(std::memory_order_acquire);
+        if (requestedReset != appliedNotchResetGeneration) {
+            for (auto& state : states) {
+                state = {};
+                state.sampleRate = sampleRate;
+            }
+            appliedNotchResetGeneration = requestedReset;
+            publishedNotchResetGeneration.store(requestedReset, std::memory_order_release);
+        }
+        const auto capacity = getNotchCapacity();
+        for (std::size_t i = 0; i < capacity; ++i) {
             const auto before = targetSequence[i].load(std::memory_order_acquire);
             if ((before & 1u) != 0u) continue;
             const auto frequency = targetFrequency[i].load(std::memory_order_relaxed);
@@ -331,7 +363,7 @@ public:
                 state.calibrationHotspot = hotspot;
             }
         }
-        for (std::size_t i = 0; i < maxNotches; ++i) {
+        for (std::size_t i = 0; i < capacity; ++i) {
             publishedFrequency[i].store(states[i].frequency, std::memory_order_relaxed);
             publishedDepth[i].store(states[i].currentDepthDb, std::memory_order_relaxed);
             publishedQ[i].store(states[i].q, std::memory_order_relaxed);
@@ -347,6 +379,21 @@ public:
 
     // Called only by the dedicated analysis thread.
     bool pumpBackgroundAnalysis() noexcept {
+        const auto requestedReset = notchResetGeneration.load(std::memory_order_acquire);
+        if (requestedReset != analyzedNotchResetGeneration) {
+            persistence.fill(0);
+            growthFrames.fill(0);
+            previousLevel.fill(-120.0f);
+            notchSeen.fill(false);
+            analysisNotches = {};
+            for (std::size_t i = 0; i < maxNotches; ++i) {
+                targetFrequency[i].store(0.0f, std::memory_order_relaxed);
+                targetDepth[i].store(0.0f, std::memory_order_relaxed);
+                targetQ[i].store(0.0f, std::memory_order_relaxed);
+                targetHotspot[i].store(false, std::memory_order_relaxed);
+            }
+            analyzedNotchResetGeneration = requestedReset;
+        }
         float scratch[1024];
         const auto popped = inputRing->pop(scratch, 1024);
         for (std::size_t i = 0; i < popped; ++i) analyzeSample(scratch[i]);
@@ -357,7 +404,11 @@ public:
         ProtectionSnapshot result;
         for (std::size_t i = 0; i < analyzerBins; ++i)
             result.spectrumDb[i] = publishedSpectrum[i].load(std::memory_order_relaxed);
-        for (std::size_t i = 0; i < maxNotches; ++i) {
+        const auto capacity = getNotchCapacity();
+        const auto resetPending =
+            publishedNotchResetGeneration.load(std::memory_order_acquire)
+            != notchResetGeneration.load(std::memory_order_acquire);
+        for (std::size_t i = 0; i < capacity && !resetPending; ++i) {
             const auto frequency = publishedFrequency[i].load(std::memory_order_relaxed);
             const auto depth = publishedDepth[i].load(std::memory_order_relaxed);
             const auto q = publishedQ[i].load(std::memory_order_relaxed);
@@ -415,6 +466,7 @@ private:
     };
 
     void analyzeSample(float sample) noexcept {
+        const auto capacity = getNotchCapacity();
         analysisBuffer[static_cast<std::size_t>(detectorSamples)] = sample;
         if (++detectorSamples < static_cast<int>(fftSize)) return;
         for (std::size_t i = 0; i < fftSize; ++i) {
@@ -534,9 +586,9 @@ private:
                     ? 1 : (frequency > 1000.0f ? 16 : 24);
                 if (persistence[fftBin] < requiredFrames) continue;
                 const auto score = excess + tonal;
-                for (std::size_t slot = 0; slot < maxNotches; ++slot) {
+                for (std::size_t slot = 0; slot < capacity; ++slot) {
                     if (score <= candidateScores[slot]) continue;
-                    for (std::size_t move = maxNotches - 1; move > slot; --move) {
+                    for (std::size_t move = capacity - 1; move > slot; --move) {
                         candidateScores[move] = candidateScores[move - 1];
                         candidateBins[move] = candidateBins[move - 1];
                     }
@@ -551,7 +603,8 @@ private:
         }
         std::array<std::size_t, maxNotches> engagedBins {};
         std::size_t engagedCount = 0;
-        for (const auto candidate : candidateBins) {
+        for (std::size_t candidateIndex = 0; candidateIndex < capacity; ++candidateIndex) {
+            const auto candidate = candidateBins[candidateIndex];
             if (candidate == 0) continue;
             const auto distinct = std::none_of(engagedBins.begin(), engagedBins.begin() + engagedCount,
                 [candidate](std::size_t other) { return std::abs(static_cast<int>(other) - static_cast<int>(candidate)) < 2; });
@@ -571,7 +624,7 @@ private:
                 engageFrequency(candidateFrequency, selectedPreset, calibrationHotspot);
             }
         }
-        for (std::size_t i = 0; i < analysisNotches.size(); ++i) {
+        for (std::size_t i = 0; i < capacity; ++i) {
             auto& notch = analysisNotches[i];
             if (notch.frequency <= 0 || notchSeen[i]) continue;
             // Release from candidate absence as well as level. This prevents a
@@ -590,7 +643,7 @@ private:
         }
         for (std::size_t i = 0; i < analyzerBins; ++i)
             publishedSpectrum[i].store(spectrumDb[i], std::memory_order_relaxed);
-        for (std::size_t i = 0; i < maxNotches; ++i) {
+        for (std::size_t i = 0; i < capacity; ++i) {
             const auto sequence = targetSequence[i].load(std::memory_order_relaxed);
             targetSequence[i].store(sequence + 1u, std::memory_order_release);
             targetFrequency[i].store(analysisNotches[i].frequency, std::memory_order_relaxed);
@@ -605,25 +658,29 @@ private:
     }
     void engageFrequency(float frequency, ProtectionPreset selectedPreset,
                          bool calibrationHotspot) noexcept {
+        const auto capacity = getNotchCapacity();
+        if (capacity == 0) return;
         ShadowNotch* selected = nullptr;
-        for (auto& notch : analysisNotches) {
+        for (std::size_t i = 0; i < capacity; ++i) {
+            auto& notch = analysisNotches[i];
             if (notch.frequency > 0 && std::abs(std::log2(notch.frequency / frequency)) < 0.08f) {
                 selected = &notch;
                 break;
             }
         }
         if (!selected) {
-            const auto freeSlot = std::find_if(analysisNotches.begin(), analysisNotches.end(),
-                [this](const ShadowNotch& notch) {
-                    const auto index = static_cast<std::size_t>(&notch - analysisNotches.data());
-                    return notch.frequency <= 0 || (notch.targetDepthDb >= -0.1f &&
-                        publishedDepth[index].load(std::memory_order_relaxed) > -0.5f);
-                });
-            if (freeSlot != analysisNotches.end()) selected = &*freeSlot;
+            for (std::size_t i = 0; i < capacity; ++i) {
+                const auto& notch = analysisNotches[i];
+                if (notch.frequency <= 0 || (notch.targetDepthDb >= -0.1f &&
+                    publishedDepth[i].load(std::memory_order_relaxed) > -0.5f)) {
+                    selected = &analysisNotches[i];
+                    break;
+                }
+            }
         }
         if (!selected) {
             std::size_t weakest = 0;
-            for (std::size_t i = 1; i < maxNotches; ++i) {
+            for (std::size_t i = 1; i < capacity; ++i) {
                 if (publishedDepth[i].load(std::memory_order_relaxed) >
                     publishedDepth[weakest].load(std::memory_order_relaxed))
                     weakest = i;
@@ -693,6 +750,11 @@ private:
     std::array<std::atomic<float>, maxNotches> targetFrequency {}, targetDepth {}, targetQ {};
     std::array<std::atomic<bool>, maxNotches> targetHotspot {};
     std::array<std::atomic<unsigned int>, maxNotches> targetSequence {};
+    std::atomic<std::size_t> notchCapacity { defaultNotchesPerRoute };
+    std::atomic<unsigned long long> notchResetGeneration { 0 };
+    std::atomic<unsigned long long> publishedNotchResetGeneration { 0 };
+    unsigned long long appliedNotchResetGeneration = 0;
+    unsigned long long analyzedNotchResetGeneration = 0;
     std::atomic_bool enabled { false };
     std::atomic<ProtectionPreset> preset { ProtectionPreset::speech };
     std::atomic<float> suppressionAmount { 0.75f };

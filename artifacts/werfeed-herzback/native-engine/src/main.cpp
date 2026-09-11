@@ -5,6 +5,7 @@
 #include "Dsp.h"
 #include "DevicePolicy.h"
 #include "Routing.h"
+#include "CalibrationPersistence.h"
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -208,6 +209,40 @@ public:
         emitState("protection_changed");
     }
 
+    void setRouteArming(const juce::DynamicObject& command) {
+        const std::lock_guard<std::mutex> controlGuard(controlMutex);
+        if (!configured.load()) { error("configure an audio device before arming routes"); return; }
+        const auto routeIndex = static_cast<int>(getPropertyOr(command, "route", -1));
+        if (routeIndex < 0 || routeIndex >= routeCount) {
+            error("route arming index is invalid"); return;
+        }
+        const auto enabled = static_cast<bool>(getPropertyOr(command, "enabled", false));
+        const auto route = routes[static_cast<std::size_t>(routeIndex)];
+        if (enabled && (route.input < 0 || route.output < 0)) {
+            error("armed route must have a mapped mono input and output"); return;
+        }
+
+        const std::lock_guard<std::mutex> processorGuard(processorMutex);
+        routeEnabled[static_cast<std::size_t>(routeIndex)].store(enabled, std::memory_order_release);
+        for (int index = 0; index < routeCount; ++index) {
+            auto& processor = processors[static_cast<std::size_t>(index)];
+            processor.setNotchCapacity(notchCapacityForRoute(index));
+            processor.requestNotchReset();
+            processor.setEnabled(
+                routeEnabled[static_cast<std::size_t>(index)].load(std::memory_order_relaxed)
+                && protectionEnabled.load(std::memory_order_relaxed));
+        }
+
+        auto* event = new juce::DynamicObject();
+        event->setProperty("type", "route_arming");
+        event->setProperty("route", routeIndex + 1);
+        event->setProperty("enabled", enabled);
+        event->setProperty("maximumAllowedNotches",
+            static_cast<int>(processors[static_cast<std::size_t>(routeIndex)].getNotchCapacity()));
+        emit(juce::var(event));
+        emitState("route_arming_changed");
+    }
+
     void startCalibration(const juce::DynamicObject& command) {
         const std::lock_guard<std::mutex> controlGuard(controlMutex);
         if (!running.load() || !deviceActive.load()) { error("start active audio before calibration"); return; }
@@ -332,7 +367,10 @@ public:
         } else {
             for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
                 const auto route = routes[static_cast<std::size_t>(routeIndex)];
-                if (route.input < 0 || route.input >= ins || route.output < 0 || route.output >= outs) continue;
+                if (!routeEnabled[static_cast<std::size_t>(routeIndex)].load(std::memory_order_acquire)
+                    || route.input < 0 || route.input >= ins
+                    || route.output < 0 || route.output >= outs)
+                    continue;
                 auto& processor = processors[static_cast<std::size_t>(routeIndex)];
                 processor.pullPendingNotchUpdates();
                 for (int frame = 0; frame < samples; ++frame) {
@@ -426,10 +464,13 @@ public:
             auto* routeObject = new juce::DynamicObject();
             routeObject->setProperty("route", routeIndex + 1);
             routeObject->setProperty("enabled",
+                routeEnabled[static_cast<std::size_t>(routeIndex)].load(std::memory_order_acquire) &&
                 routes[static_cast<std::size_t>(routeIndex)].input >= 0 &&
                 routes[static_cast<std::size_t>(routeIndex)].output >= 0);
             routeObject->setProperty("suppression", snapshot.suppressionAmount);
             routeObject->setProperty("activeNotches", snapshot.activeNotches);
+            routeObject->setProperty("maximumAllowedNotches",
+                static_cast<int>(processors[static_cast<std::size_t>(routeIndex)].getNotchCapacity()));
             routeObject->setProperty("maximumCutDb", snapshot.maximumCutDb);
             juce::Array<juce::var> routeSpectrum;
             for (const auto value : snapshot.spectrumDb) {
@@ -552,10 +593,7 @@ public:
     }
 
 private:
-    struct Baseline {
-        int delaySamples = 0;
-        std::array<float, werfeed::analyzerBins> responseDb {};
-    };
+    using Baseline = werfeed::CalibrationBaseline;
     void prepareProcessorsForCurrentDevice() {
         auto* device = manager.getCurrentAudioDevice();
         if (device == nullptr) return;
@@ -563,6 +601,7 @@ private:
         for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
             auto& processor = processors[static_cast<std::size_t>(routeIndex)];
             processor.prepare(device->getCurrentSampleRate());
+            processor.setNotchCapacity(notchCapacityForRoute(routeIndex));
             processor.setSuppressionAmount(routeSuppression[static_cast<std::size_t>(routeIndex)]);
             processor.setPreset(protectionPreset.load(std::memory_order_relaxed));
             processor.setEnabled(protectionEnabled.load(std::memory_order_relaxed));
@@ -571,33 +610,40 @@ private:
             if (found != baselines.end()) processor.setCalibrationProfile(found->second.responseDb);
         }
     }
-    void loadCalibrations() {
-        const auto parsed = juce::JSON::parse(calibrationFile);
-        auto* root = parsed.getDynamicObject();
-        if (!root) return;
-        for (const auto& property : root->getProperties()) {
-            auto* object = property.value.getDynamicObject();
-            auto* response = object ? object->getProperty("responseDb").getArray() : nullptr;
-            if (!object || !response || response->size() != static_cast<int>(werfeed::analyzerBins)) continue;
-            Baseline baseline;
-            baseline.delaySamples = static_cast<int>(object->getProperty("delaySamples"));
-            for (std::size_t i = 0; i < werfeed::analyzerBins; ++i)
-                baseline.responseDb[i] = static_cast<float>(static_cast<double>(response->getReference(static_cast<int>(i))));
-            baselines[property.name.toString()] = baseline;
+    int activeRouteCount() const noexcept {
+        int count = 0;
+        for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+            const auto route = routes[static_cast<std::size_t>(routeIndex)];
+            if (routeEnabled[static_cast<std::size_t>(routeIndex)].load(std::memory_order_acquire)
+                && route.input >= 0 && route.output >= 0)
+                ++count;
         }
+        return count;
+    }
+    std::size_t notchCapacityForRoute(int routeIndex) const noexcept {
+        const auto route = routes[static_cast<std::size_t>(routeIndex)];
+        if (!routeEnabled[static_cast<std::size_t>(routeIndex)].load(std::memory_order_acquire)
+            || route.input < 0 || route.output < 0)
+            return 0;
+        const auto activeCount = activeRouteCount();
+        if (activeCount <= 0) return 0;
+        int activeOrdinal = 0;
+        for (int index = 0; index < routeIndex; ++index) {
+            const auto previous = routes[static_cast<std::size_t>(index)];
+            if (routeEnabled[static_cast<std::size_t>(index)].load(std::memory_order_acquire)
+                && previous.input >= 0 && previous.output >= 0)
+                ++activeOrdinal;
+        }
+        return werfeed::sharedNotchCapacity(
+            static_cast<std::size_t>(routeCount) * werfeed::defaultNotchesPerRoute,
+            static_cast<std::size_t>(activeCount),
+            static_cast<std::size_t>(activeOrdinal));
+    }
+    void loadCalibrations() {
+        werfeed::loadCalibrationBaselines(calibrationFile, baselines);
     }
     bool saveCalibrations() {
-        auto* root = new juce::DynamicObject();
-        for (const auto& [key, baseline] : baselines) {
-            auto* object = new juce::DynamicObject();
-            object->setProperty("delaySamples", baseline.delaySamples);
-            juce::Array<juce::var> response;
-            for (const auto value : baseline.responseDb) response.add(value);
-            object->setProperty("responseDb", juce::var(response));
-            root->setProperty(key, juce::var(object));
-        }
-        if (!calibrationFile.getParentDirectory().createDirectory()) return false;
-        return calibrationFile.replaceWithText(juce::JSON::toString(juce::var(root), true));
+        return werfeed::saveCalibrationBaselines(calibrationFile, baselines);
     }
     bool loadCalibrationAnnouncement(const juce::String& path, double targetRate, float level) {
         calibrationAnnouncement.clear();
@@ -727,8 +773,8 @@ private:
             auto* r = array->getReference(i).getDynamicObject();
             if (!r) { error("each route must be an object"); return false; }
             const auto enabled = static_cast<bool>(getPropertyOr(*r, "enabled", true));
-            const auto inputChannel = enabled ? static_cast<int>(r->getProperty("input")) : -1;
-            const auto outputChannel = enabled ? static_cast<int>(r->getProperty("output")) : -1;
+            const auto inputChannel = static_cast<int>(getPropertyOr(*r, "input", -1));
+            const auto outputChannel = static_cast<int>(getPropertyOr(*r, "output", -1));
             if (enabled && (inputChannel < 0 || inputChannel >= inputChannels ||
                             outputChannel < 0 || outputChannel >= outputChannels)) {
                 error("enabled route channel is outside the configured mono channel range");
@@ -738,6 +784,7 @@ private:
                 inputChannel,
                 outputChannel
             };
+            routeEnabled[static_cast<size_t>(i)].store(enabled, std::memory_order_release);
             routeSuppression[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(
                 getPropertyOr(*r, "suppression", 0.75)));
         }
@@ -745,6 +792,7 @@ private:
     }
     juce::AudioDeviceManager manager;
     std::array<werfeed::Route, werfeed::maxRoutes> routes {};
+    std::array<std::atomic_bool, werfeed::maxRoutes> routeEnabled {};
     std::array<float, werfeed::maxRoutes> routeSuppression {};
     std::array<werfeed::FeedbackProcessor, werfeed::maxRoutes> processors {};
     int routeCount = 0; // only changed while callback is detached
@@ -810,6 +858,7 @@ int main() {
         else if (name == "configure") engine.configure(*object);
         else if (name == "start") engine.start();
         else if (name == "stop") engine.stop();
+        else if (name == "set_route_arming") engine.setRouteArming(*object);
         else if (name == "restart_audio") engine.restartAudio();
         else if (name == "set_protection") engine.setProtection(*object);
         else if (name == "start_calibration") engine.startCalibration(*object);

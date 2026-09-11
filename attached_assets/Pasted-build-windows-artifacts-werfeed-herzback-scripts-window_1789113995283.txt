@@ -1,0 +1,58 @@
+build-windows: artifacts/werfeed-herzback/scripts/windows-release.ps1#L0
+Windows release failed during native engine tests: ctest exited with code 8.
+
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+         Creating directory "x64\Release\ALL_BUILD\ALL_BUILD.tlog\".
+       InitializeBuildStatus:
+         Creating "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild".
+       CustomBuild:
+         Building Custom Rule D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/CMakeLists.txt
+       FinalizeBuildStatus:
+         Deleting file "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild".
+         Touching "x64\Release\ALL_BUILD\ALL_BUILD.tlog\ALL_BUILD.lastbuildstate".
+     1>Done Building Project "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\ALL_BUILD.vcxproj" (default targets).
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:01:00.76
+
+Internal ctest changing into directory: D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows
+Test project D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/build-windows
+    Start 1: routing-tests
+1/3 Test #1: routing-tests ....................   Passed    0.01 sec
+    Start 2: dsp-tests
+2/3 Test #2: dsp-tests ........................***Exception: SegFault  0.01 sec
+
+    Start 3: device-policy-tests
+3/3 Test #3: device-policy-tests ..............   Passed    0.01 sec
+
+67% tests passed, 1 tests failed out of 3
+
+Total Test time (real) =   0.08 sec
+
+The following tests FAILED:
+	  2 - dsp-tests (SEGFAULT)
+Errors while running CTest
+
+         Creating "dsp-tests.dir\Release\dsp-tests.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching "dsp-tests.dir\Release\dsp-tests.tlog\unsuccessfulbuild".
+     1>Project "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\ALL_BUILD.vcxproj" (1) is building "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\build-windows\routing-tests.vcxproj" (5) on node 1 (default targets).
+     5>PrepareForBuild:
+         Creating directory "routing-tests.dir\Release\".
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+         Creating directory "routing-tests.dir\Release\routing-tests.tlog\".
+       InitializeBuildStatus:
+         Creating "routing-tests.dir\Release\routing-tests.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching "routing-tests.dir\Release\routing-tests.tlog\unsuccessfulbuild".
+       CustomBuild:
+         Building Custom Rule D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/CMakeLists.txt
+     4>CustomBuild:
+         Building Custom Rule D:/a/werfeed-herzback-app/werfeed-herzback-app/artifacts/werfeed-herzback/native-engine/CMakeLists.txt
+     5>ClCompile:
+         C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\CL.exe /c /I"D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\src" /nologo /W1 /WX- /diagnostics:column /O2 /Ob2 /D _MBCS /D WIN32 /D _WINDOWS /D NDEBUG /D "CMAKE_INTDIR=\"Release\"" /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++20 /Fo"routing-tests.dir\Release\\" /Fd"routing-tests.dir\Release\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "D:\a\werfeed-herzback-app\werfeed-herzback-app\artifacts\werfeed-herzback\native-engine\tests\routing_tests.cpp"
+         routing_tests.cpp
+     4>ClCompile:
+         C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\CL.exe /c /I"D:\

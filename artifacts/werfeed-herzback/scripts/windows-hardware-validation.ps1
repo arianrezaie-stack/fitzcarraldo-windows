@@ -28,6 +28,7 @@ $MetadataPath = Join-Path $EvidenceRoot "hardware-session-$SafeDeviceType-metada
 $EnumerationPath = Join-Path $EvidenceRoot "hardware-device-enumeration-$SafeDeviceType.jsonl"
 $EndpointInventoryPath = Join-Path $EvidenceRoot "audio-endpoint-inventory-$SafeDeviceType.json"
 $RouteStabilityPath = Join-Path $EvidenceRoot "route-stability-$SafeDeviceType.jsonl"
+$NotchRedistributionPath = Join-Path $EvidenceRoot "notch-redistribution-$SafeDeviceType.jsonl"
 $RouteResetPath = Join-Path $EvidenceRoot "route-reset-restart-$SafeDeviceType.json"
 $ReportPath = Join-Path $EvidenceRoot "hardware-validation-$SafeDeviceType.txt"
 
@@ -624,6 +625,124 @@ if ($StabilityTelemetry.Count -eq 0) {
             } elseif ([bool]$ObservedEnabled -ne $ExpectedRoute.enabled) {
                 Add-Failure "Route $($ExpectedRoute.route) changed enabled state; expected $($ExpectedRoute.enabled)."
             }
+        }
+    }
+}
+
+# The redistribution run keeps one audio process alive while four mapped routes
+# move through 6, 8, 12, and 24 slots. Every step must have live telemetry,
+# stable route indices, finite health readings, and no stale cuts after reset.
+$RedistributionEvents = Convert-JsonLines $NotchRedistributionPath "Notch redistribution evidence"
+$ExpectedRedistribution = [ordered]@{
+    "notch-four-active" = @(@{ route = 1; enabled = $true; capacity = 6 }, @{ route = 2; enabled = $true; capacity = 6 }, @{ route = 3; enabled = $true; capacity = 6 }, @{ route = 4; enabled = $true; capacity = 6 })
+    "notch-three-active" = @(@{ route = 1; enabled = $true; capacity = 8 }, @{ route = 2; enabled = $true; capacity = 8 }, @{ route = 3; enabled = $true; capacity = 8 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-two-active" = @(@{ route = 1; enabled = $true; capacity = 12 }, @{ route = 2; enabled = $true; capacity = 12 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-one-active" = @(@{ route = 1; enabled = $true; capacity = 24 }, @{ route = 2; enabled = $false; capacity = 0 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-two-active-restored" = @(@{ route = 1; enabled = $true; capacity = 12 }, @{ route = 2; enabled = $true; capacity = 12 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-three-active-restored" = @(@{ route = 1; enabled = $true; capacity = 8 }, @{ route = 2; enabled = $true; capacity = 8 }, @{ route = 3; enabled = $true; capacity = 8 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-four-active-restored" = @(@{ route = 1; enabled = $true; capacity = 6 }, @{ route = 2; enabled = $true; capacity = 6 }, @{ route = 3; enabled = $true; capacity = 6 }, @{ route = 4; enabled = $true; capacity = 6 })
+}
+$RedistributionCurrentStep = ""
+$RedistributionStepTelemetry = @{}
+$RedistributionErrors = 0
+foreach ($Event in $RedistributionEvents) {
+    $EventType = [string](Get-PropertyValue $Event "type")
+    if ($EventType -eq "test_marker") {
+        $MarkerName = [string](Get-PropertyValue $Event "name")
+        if ($ExpectedRedistribution.Contains($MarkerName)) {
+            $RedistributionCurrentStep = $MarkerName
+        }
+        continue
+    }
+    if ($EventType -eq "error") {
+        $RedistributionErrors++
+        continue
+    }
+    if ($EventType -eq "state" -and [string](Get-PropertyValue $Event "phase") -in @("stopped", "device_stopped")) {
+        Add-Failure "Notch redistribution audio stopped during $RedistributionCurrentStep."
+        continue
+    }
+    if ($EventType -ne "telemetry" -or -not $RedistributionCurrentStep) {
+        continue
+    }
+    if (-not $RedistributionStepTelemetry.ContainsKey($RedistributionCurrentStep)) {
+        $RedistributionStepTelemetry[$RedistributionCurrentStep] = $Event
+    }
+}
+if ($RedistributionErrors -gt 0) {
+    Add-Failure "Notch redistribution emitted $RedistributionErrors engine error event(s)."
+}
+foreach ($ExpectedStep in $ExpectedRedistribution.Keys) {
+    if (-not $RedistributionStepTelemetry.ContainsKey($ExpectedStep)) {
+        Add-Failure "Notch redistribution has no live telemetry for $ExpectedStep."
+        continue
+    }
+    $TelemetryEvent = $RedistributionStepTelemetry[$ExpectedStep]
+    foreach ($Field in @("running", "callbackCpu", "xruns", "clockStability", "inputPeak", "outputPeak")) {
+        if (-not (Has-Value $TelemetryEvent $Field)) {
+            Add-Failure "Notch redistribution step $ExpectedStep is missing $Field telemetry."
+        }
+    }
+    if ([bool](Get-PropertyValue $TelemetryEvent "running") -ne $true) {
+        Add-Failure "Notch redistribution step $ExpectedStep was not running."
+    }
+    $CallbackCpu = 0.0
+    if (Convert-ToDouble (Get-PropertyValue $TelemetryEvent "callbackCpu") `
+            "callbackCpu" "Notch redistribution step $ExpectedStep" ([ref]$CallbackCpu) -and
+        ($CallbackCpu -lt 0 -or $CallbackCpu -gt $MaximumCallbackCpu)) {
+        Add-Failure "Notch redistribution step $ExpectedStep reports callback CPU $CallbackCpu outside the safe 0-$MaximumCallbackCpu ratio."
+    }
+    $Xruns = 0.0
+    if (Convert-ToDouble (Get-PropertyValue $TelemetryEvent "xruns") `
+            "xruns" "Notch redistribution step $ExpectedStep" ([ref]$Xruns) -and $Xruns -ne 0) {
+        Add-Failure "Notch redistribution step $ExpectedStep reports $Xruns xrun(s); expected zero."
+    }
+    $ClockStability = 0.0
+    if (Convert-ToDouble (Get-PropertyValue $TelemetryEvent "clockStability") `
+            "clockStability" "Notch redistribution step $ExpectedStep" ([ref]$ClockStability) -and
+        ($ClockStability -lt 0 -or $ClockStability -gt 1)) {
+        Add-Failure "Notch redistribution step $ExpectedStep reports invalid clock stability $ClockStability."
+    }
+    foreach ($PeakField in @("inputPeak", "outputPeak")) {
+        $Peak = 0.0
+        if (Convert-ToDouble (Get-PropertyValue $TelemetryEvent $PeakField) `
+                $PeakField "Notch redistribution step $ExpectedStep" ([ref]$Peak) -and
+            ($Peak -lt 0 -or $Peak -gt 2)) {
+            Add-Failure "Notch redistribution step $ExpectedStep reports invalid $PeakField $Peak."
+        }
+    }
+    $RouteTelemetry = @(Get-PropertyValue $TelemetryEvent "routeTelemetry")
+    if ($RouteTelemetry.Count -ne 4) {
+        Add-Failure "Notch redistribution step $ExpectedStep must contain exactly four route slots."
+        continue
+    }
+    foreach ($ExpectedRoute in $ExpectedRedistribution[$ExpectedStep]) {
+        $ObservedRoute = $RouteTelemetry | Where-Object {
+            [int](Get-PropertyValue $_ "route") -eq $ExpectedRoute.route
+        } | Select-Object -First 1
+        if ($null -eq $ObservedRoute) {
+            Add-Failure "Notch redistribution step $ExpectedStep is missing route $($ExpectedRoute.route)."
+            continue
+        }
+        if ([bool](Get-PropertyValue $ObservedRoute "enabled") -ne $ExpectedRoute.enabled) {
+            Add-Failure "Notch redistribution step $ExpectedStep has unexpected enabled state for route $($ExpectedRoute.route)."
+        }
+        $Capacity = 0.0
+        if (-not (Convert-ToDouble (Get-PropertyValue $ObservedRoute "maximumAllowedNotches") `
+                "maximumAllowedNotches" "Notch redistribution step $ExpectedStep route $($ExpectedRoute.route)" ([ref]$Capacity))) {
+            continue
+        }
+        if ($Capacity -ne $ExpectedRoute.capacity) {
+            Add-Failure "Notch redistribution step $ExpectedStep route $($ExpectedRoute.route) reports $Capacity slots; expected $($ExpectedRoute.capacity)."
+        }
+        $ActiveNotches = 0.0
+        if (Convert-ToDouble (Get-PropertyValue $ObservedRoute "activeNotches") `
+                "activeNotches" "Notch redistribution step $ExpectedStep route $($ExpectedRoute.route)" ([ref]$ActiveNotches) -and
+            $ActiveNotches -gt $Capacity) {
+            Add-Failure "Notch redistribution step $ExpectedStep route $($ExpectedRoute.route) has $ActiveNotches active cuts above its $Capacity-slot capacity."
+        }
+        if (-not $ExpectedRoute.enabled -and $ActiveNotches -ne 0) {
+            Add-Failure "Disarmed route $($ExpectedRoute.route) retained $ActiveNotches active notch(es) at $ExpectedStep."
         }
     }
 }
