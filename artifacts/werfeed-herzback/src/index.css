@@ -125,7 +125,8 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 }
 .eyebrow { color: #ae8e73; font-size: 10px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; }
 .brand-title { margin: 4px 0 0; color: #f0e0c8; font-family: var(--app-font-serif); font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
-.brand-title span { color: #b79679; font-family: var(--app-font-sans); font-size: 12px; font-weight: 400; }
+.brand-title .brand-byline { color: #b79679; font-family: var(--app-font-sans); font-size: 12px; font-weight: 400; }
+.brand-version { display: inline-block; margin-left: 5px; color: #d0a16f; font-family: var(--app-font-mono); font-size: 9px; font-weight: 700; letter-spacing: .08em; vertical-align: middle; }
 .header-meta { display: flex; align-items: center; gap: 13px; }
 .session { color: #a2876f; font: 10px var(--app-font-mono); letter-spacing: .06em; }
 .header-bypass { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #806248; border-radius: 6px; padding: 8px 10px; color: #e2c18f; background: #513521; font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; transition: border-color .16s ease, background-color .16s ease, transform .16s ease; }
@@ -342,7 +343,7 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 980px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 760px) { .app-shell { padding-inline: 12px; }.header-meta { display: flex; gap: 8px; }.header-meta .session { display: none; }.header-bypass { padding-inline: 8px; }.hero-copy { align-items: stretch; flex-direction: column; }.hero-actions { width: 100%; }.action-button { flex: 1; justify-content: center; }.metrics { grid-template-columns: 1fr; }.route-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.mapping-controls { grid-template-columns: 1fr; }.panel-heading, .curve-toolbar { align-items: stretch; flex-direction: column; }.mode-switch { align-self: flex-start; }.control-strip { justify-content: flex-start; }.route-fader { align-items: stretch; flex-direction: column; }.fader-control { width: 100%; min-width: 100%; }.guard-card { display: block; }.guard-card-header { margin-bottom: 18px; }.guard-summary { border-top: 1px solid #80563e; border-left: 0; padding: 13px 0 0; }.footer-bar { align-items: flex-start; flex-direction: column; }.footer-actions { width: 100%; justify-content: space-between; } }
-@media (max-width: 470px) { .brand-title span { display: none; }.guard-card { display: block; }.guard-summary { border-top: 1px solid #80563e; border-left: 0; padding: 13px 0 0; }.route-grid { gap: 7px; }.route-card { padding: 10px; }.route-meta { display: block; line-height: 1.7; }.curve-section { overflow: hidden; }.control-strip { gap: 8px; }.spectrum { height: 180px; } }
+@media (max-width: 470px) { .brand-title .brand-byline { display: none; }.guard-card { display: block; }.guard-summary { border-top: 1px solid #80563e; border-left: 0; padding: 13px 0 0; }.route-grid { gap: 7px; }.route-card { padding: 10px; }.route-meta { display: block; line-height: 1.7; }.curve-section { overflow: hidden; }.control-strip { gap: 8px; }.spectrum { height: 180px; } }
 
 /* On a fullscreen landscape monitor, use the available width to keep the
    complete control surface visible. Smaller and portrait viewports retain the
