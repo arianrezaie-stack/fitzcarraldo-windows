@@ -45,11 +45,11 @@ float processSample(werfeed::FeedbackProcessor& processor, float input) {
 
 int main() {
     constexpr double rate = 48000.0;
-    static_assert(werfeed::sharedNotchCapacity(24, 4, 0) == 6);
-    static_assert(werfeed::sharedNotchCapacity(24, 3, 0) == 8);
-    static_assert(werfeed::sharedNotchCapacity(24, 2, 0) == 12);
-    static_assert(werfeed::sharedNotchCapacity(24, 1, 0) == 24);
-    static_assert(werfeed::sharedNotchCapacity(24, 0, 0) == 0);
+    static_assert(werfeed::sharedNotchCapacity(32, 4, 0) == 8);
+    static_assert(werfeed::sharedNotchCapacity(32, 3, 0) == 11);
+    static_assert(werfeed::sharedNotchCapacity(32, 2, 0) == 16);
+    static_assert(werfeed::sharedNotchCapacity(32, 1, 0) == 32);
+    static_assert(werfeed::sharedNotchCapacity(32, 0, 0) == 0);
     static_assert(werfeed::sharedNotchCapacity(48, 8, 7) == 6);
     static_assert(werfeed::sharedNotchCapacity(48, 5, 0) == 10);
     static_assert(werfeed::sharedNotchCapacity(48, 5, 4) == 9);
@@ -143,7 +143,7 @@ int main() {
     const auto snapshot = processor->snapshot();
     REQUIRE(snapshot.activeNotches > 0);
     REQUIRE(snapshot.activeNotches <= static_cast<int>(werfeed::maxNotches));
-    REQUIRE(snapshot.maximumCutDb >= -24.1f && snapshot.maximumCutDb <= -23.4f);
+    REQUIRE(snapshot.maximumCutDb >= -32.1f && snapshot.maximumCutDb <= -31.4f);
     const auto active = *std::min_element(snapshot.notches.begin(), snapshot.notches.end(),
         [](const werfeed::NotchSnapshot& a, const werfeed::NotchSnapshot& b) {
             const auto aDistance = a.active ? std::abs(std::log2(a.frequency / 1000.0f)) : 1000.0f;
@@ -193,7 +193,7 @@ int main() {
             processSample(*releaseTone, 0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
         const auto releaseSnapshot = releaseTone->snapshot();
         REQUIRE(releaseSnapshot.activeNotches == 1);
-        REQUIRE(releaseSnapshot.maximumCutDb <= -23.4f);
+        REQUIRE(releaseSnapshot.maximumCutDb <= -31.4f);
         REQUIRE(std::any_of(releaseSnapshot.notches.begin(), releaseSnapshot.notches.end(),
             [frequency](const werfeed::NotchSnapshot& notch) {
                 return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.02f
@@ -204,7 +204,7 @@ int main() {
         for (int i = 0; i < 300000; ++i) processSample(*releaseTone, 0.0f);
         REQUIRE(releaseTone->snapshot().activeNotches == 0);
     }
-    // The speech scale reaches -14 dB at 70% and -24 dB at full depth.
+    // The speech scale reaches -14 dB at 70%, -24 dB at 80%, and -32 dB at full depth.
     auto seventyPercent = std::make_unique<werfeed::FeedbackProcessor>();
     seventyPercent->prepare(rate); seventyPercent->setBaseline(baseline);
     seventyPercent->setEnabled(true); seventyPercent->setSuppressionAmount(0.7f);
@@ -214,7 +214,13 @@ int main() {
     const auto seventySnapshot = seventyPercent->snapshot();
     REQUIRE(seventySnapshot.maximumCutDb >= -14.1f &&
             seventySnapshot.maximumCutDb <= -13.4f);
-    // The upper 30% of Speech lowers the threshold beyond the former maximum.
+    seventyPercent->setSuppressionAmount(0.8f);
+    for (int i = 0; i < 96000; ++i)
+        processSample(*seventyPercent, 0.3f * std::sin(
+            2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
+    REQUIRE(seventyPercent->snapshot().maximumCutDb >= -24.1f &&
+            seventyPercent->snapshot().maximumCutDb <= -23.4f);
+    // The upper 20% of Speech lowers the threshold beyond the former maximum.
     auto thresholdAtSeventy = std::make_unique<werfeed::FeedbackProcessor>();
     thresholdAtSeventy->prepare(rate); thresholdAtSeventy->clearBaseline();
     thresholdAtSeventy->setEnabled(true); thresholdAtSeventy->setSuppressionAmount(0.7f);
@@ -222,7 +228,7 @@ int main() {
     thresholdAtHundred->prepare(rate); thresholdAtHundred->clearBaseline();
     thresholdAtHundred->setEnabled(true); thresholdAtHundred->setSuppressionAmount(1.0f);
     for (int i = 0; i < 96000; ++i) {
-        const auto borderlineTone = 0.003f * std::sin(
+        const auto borderlineTone = 0.0025f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
         processSample(*thresholdAtSeventy, borderlineTone);
         processSample(*thresholdAtHundred, borderlineTone);
@@ -239,13 +245,29 @@ int main() {
     highFrequency->prepare(rate); highFrequency->clearBaseline();
     highFrequency->setEnabled(true); highFrequency->setSuppressionAmount(0.5f);
     for (int i = 0; i < 96000; ++i) {
-        processSample(*lowFrequency, 0.0035f * std::sin(
+        processSample(*lowFrequency, 0.0025f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
         processSample(*highFrequency, 0.0035f * std::sin(
             2.0f * werfeed::pi * 4000.0f * i / 48000.0f));
     }
     REQUIRE(lowFrequency->snapshot().activeNotches == 0);
     REQUIRE(highFrequency->snapshot().activeNotches > 0);
+
+    // A manual cut remains active through silence until the explicit clear.
+    auto manualCut = std::make_unique<werfeed::FeedbackProcessor>();
+    manualCut->prepare(rate); manualCut->setEnabled(true); manualCut->setSuppressionAmount(0.8f);
+    manualCut->setManualNotch(1500.0f);
+    for (int i = 0; i < 96000; ++i) processSample(*manualCut, 0.0f);
+    REQUIRE(manualCut->snapshot().activeNotches == 1);
+    for (int i = 0; i < 192000; ++i) processSample(*manualCut, 0.0f);
+    REQUIRE(manualCut->snapshot().activeNotches == 1);
+    manualCut->clearManualNotch(1500.0f);
+    for (int i = 0; i < 24000; ++i) processSample(*manualCut, 0.0f);
+    REQUIRE(manualCut->snapshot().activeNotches == 0);
+    REQUIRE(werfeed::persistentNotchLimit(0.8f) == 0);
+    REQUIRE(werfeed::persistentNotchLimit(0.81f) == 3);
+    REQUIRE(werfeed::persistentNotchLimit(0.9f) == 4);
+    REQUIRE(werfeed::persistentNotchLimit(1.0f) == 8);
 
     // A calibrated resonance remains protected longer than an ordinary tone.
     constexpr float hotspotFrequency = 1000.0f;
@@ -310,7 +332,7 @@ int main() {
     REQUIRE(coupled.depthDb <= -20.0f);
 
     // A route that receives released capacity can hold more than the normal
-    // six simultaneous cuts without allocating on the realtime thread.
+    // eight simultaneous cuts without allocating on the realtime thread.
     auto expanded = std::make_unique<werfeed::FeedbackProcessor>();
     expanded->prepare(rate); expanded->clearBaseline(); expanded->setEnabled(true);
     expanded->setNotchCapacity(8);

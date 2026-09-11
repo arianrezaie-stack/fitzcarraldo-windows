@@ -12,6 +12,8 @@ const ENGINE_COMMANDS = new Set([
   'set_route_arming',
    'restart_audio',
   'set_protection',
+  'set_manual_notch',
+  'clear_manual_notch',
   'start_calibration',
    'reset_calibration',
 ]);

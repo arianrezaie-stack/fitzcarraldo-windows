@@ -630,17 +630,17 @@ if ($StabilityTelemetry.Count -eq 0) {
 }
 
 # The redistribution run keeps one audio process alive while four mapped routes
-# move through 6, 8, 12, and 24 slots. Every step must have live telemetry,
+# move through 8, 11/10, 16, and 32 slots. Every step must have live telemetry,
 # stable route indices, finite health readings, and no stale cuts after reset.
 $RedistributionEvents = Convert-JsonLines $NotchRedistributionPath "Notch redistribution evidence"
 $ExpectedRedistribution = [ordered]@{
-    "notch-four-active" = @(@{ route = 1; enabled = $true; capacity = 6 }, @{ route = 2; enabled = $true; capacity = 6 }, @{ route = 3; enabled = $true; capacity = 6 }, @{ route = 4; enabled = $true; capacity = 6 })
-    "notch-three-active" = @(@{ route = 1; enabled = $true; capacity = 8 }, @{ route = 2; enabled = $true; capacity = 8 }, @{ route = 3; enabled = $true; capacity = 8 }, @{ route = 4; enabled = $false; capacity = 0 })
-    "notch-two-active" = @(@{ route = 1; enabled = $true; capacity = 12 }, @{ route = 2; enabled = $true; capacity = 12 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
-    "notch-one-active" = @(@{ route = 1; enabled = $true; capacity = 24 }, @{ route = 2; enabled = $false; capacity = 0 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
-    "notch-two-active-restored" = @(@{ route = 1; enabled = $true; capacity = 12 }, @{ route = 2; enabled = $true; capacity = 12 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
-    "notch-three-active-restored" = @(@{ route = 1; enabled = $true; capacity = 8 }, @{ route = 2; enabled = $true; capacity = 8 }, @{ route = 3; enabled = $true; capacity = 8 }, @{ route = 4; enabled = $false; capacity = 0 })
-    "notch-four-active-restored" = @(@{ route = 1; enabled = $true; capacity = 6 }, @{ route = 2; enabled = $true; capacity = 6 }, @{ route = 3; enabled = $true; capacity = 6 }, @{ route = 4; enabled = $true; capacity = 6 })
+    "notch-four-active" = @(@{ route = 1; enabled = $true; capacity = 8 }, @{ route = 2; enabled = $true; capacity = 8 }, @{ route = 3; enabled = $true; capacity = 8 }, @{ route = 4; enabled = $true; capacity = 8 })
+    "notch-three-active" = @(@{ route = 1; enabled = $true; capacity = 11 }, @{ route = 2; enabled = $true; capacity = 11 }, @{ route = 3; enabled = $true; capacity = 10 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-two-active" = @(@{ route = 1; enabled = $true; capacity = 16 }, @{ route = 2; enabled = $true; capacity = 16 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-one-active" = @(@{ route = 1; enabled = $true; capacity = 32 }, @{ route = 2; enabled = $false; capacity = 0 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-two-active-restored" = @(@{ route = 1; enabled = $true; capacity = 16 }, @{ route = 2; enabled = $true; capacity = 16 }, @{ route = 3; enabled = $false; capacity = 0 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-three-active-restored" = @(@{ route = 1; enabled = $true; capacity = 11 }, @{ route = 2; enabled = $true; capacity = 11 }, @{ route = 3; enabled = $true; capacity = 10 }, @{ route = 4; enabled = $false; capacity = 0 })
+    "notch-four-active-restored" = @(@{ route = 1; enabled = $true; capacity = 8 }, @{ route = 2; enabled = $true; capacity = 8 }, @{ route = 3; enabled = $true; capacity = 8 }, @{ route = 4; enabled = $true; capacity = 8 })
 }
 $RedistributionCurrentStep = ""
 $RedistributionStepTelemetry = @{}

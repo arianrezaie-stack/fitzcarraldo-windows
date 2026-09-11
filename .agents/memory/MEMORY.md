@@ -11,3 +11,4 @@
 - [Watermark asset blending](ui-watermark-assets.md) — import image assets through Vite and use multiply blending when white should remain neutral against a dark background.
 - [Dynamic notch pool](dynamic-notch-pool.md) — pool six slots per configured route and redistribute only among armed routes without reducing eight-route capacity.
 - [Coupled-notch consolidation](coupled-notch-consolidation.md) — merge three clustered low-mid cuts into one wider, deeper center cut before publishing targets.
+- [Persistent feedback cuts](persistent-feedback-cuts.md) — recurring and manual cuts must be native-owned state, not renderer-only annotations.

@@ -23,25 +23,25 @@ struct ExpectedStep {
 
 constexpr std::array<ExpectedStep, 7> expectedSteps {{
     { "notch-four-active", {{
-        { 1, true, 6 }, { 2, true, 6 }, { 3, true, 6 }, { 4, true, 6 },
+        { 1, true, 8 }, { 2, true, 8 }, { 3, true, 8 }, { 4, true, 8 },
     }}},
     { "notch-three-active", {{
-        { 1, true, 8 }, { 2, true, 8 }, { 3, true, 8 }, { 4, false, 0 },
+        { 1, true, 11 }, { 2, true, 11 }, { 3, true, 10 }, { 4, false, 0 },
     }}},
     { "notch-two-active", {{
-        { 1, true, 12 }, { 2, true, 12 }, { 3, false, 0 }, { 4, false, 0 },
+        { 1, true, 16 }, { 2, true, 16 }, { 3, false, 0 }, { 4, false, 0 },
     }}},
     { "notch-one-active", {{
-        { 1, true, 24 }, { 2, false, 0 }, { 3, false, 0 }, { 4, false, 0 },
+        { 1, true, 32 }, { 2, false, 0 }, { 3, false, 0 }, { 4, false, 0 },
     }}},
     { "notch-two-active-restored", {{
-        { 1, true, 12 }, { 2, true, 12 }, { 3, false, 0 }, { 4, false, 0 },
+        { 1, true, 16 }, { 2, true, 16 }, { 3, false, 0 }, { 4, false, 0 },
     }}},
     { "notch-three-active-restored", {{
-        { 1, true, 8 }, { 2, true, 8 }, { 3, true, 8 }, { 4, false, 0 },
+        { 1, true, 11 }, { 2, true, 11 }, { 3, true, 10 }, { 4, false, 0 },
     }}},
     { "notch-four-active-restored", {{
-        { 1, true, 6 }, { 2, true, 6 }, { 3, true, 6 }, { 4, true, 6 },
+        { 1, true, 8 }, { 2, true, 8 }, { 3, true, 8 }, { 4, true, 8 },
     }}},
 }};
 

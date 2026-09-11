@@ -209,6 +209,31 @@ public:
         emitState("protection_changed");
     }
 
+    void setManualNotch(const juce::DynamicObject& command) {
+        const auto route = static_cast<int>(getPropertyOr(command, "route", -1));
+        const auto frequency = static_cast<float>(static_cast<double>(
+            getPropertyOr(command, "frequency", 0.0)));
+        if (route < 0 || route >= routeCount) {
+            error("manual notch route is invalid"); return;
+        }
+        if (!std::isfinite(frequency) || frequency < 40.0f || frequency > 20000.0f) {
+            error("manual notch frequency is invalid"); return;
+        }
+        processors[static_cast<std::size_t>(route)].setManualNotch(frequency);
+        emitState("manual_notch_added");
+    }
+
+    void clearManualNotch(const juce::DynamicObject& command) {
+        const auto route = static_cast<int>(getPropertyOr(command, "route", -1));
+        const auto frequency = static_cast<float>(static_cast<double>(
+            getPropertyOr(command, "frequency", 0.0)));
+        if (route < 0 || route >= routeCount) {
+            error("manual notch route is invalid"); return;
+        }
+        processors[static_cast<std::size_t>(route)].clearManualNotch(frequency);
+        emitState("manual_notch_removed");
+    }
+
     void setRouteArming(const juce::DynamicObject& command) {
         const std::lock_guard<std::mutex> controlGuard(controlMutex);
         if (!configured.load()) { error("configure an audio device before arming routes"); return; }
@@ -861,6 +886,8 @@ int main() {
         else if (name == "set_route_arming") engine.setRouteArming(*object);
         else if (name == "restart_audio") engine.restartAudio();
         else if (name == "set_protection") engine.setProtection(*object);
+        else if (name == "set_manual_notch") engine.setManualNotch(*object);
+        else if (name == "clear_manual_notch") engine.clearManualNotch(*object);
         else if (name == "start_calibration") engine.startCalibration(*object);
         else if (name == "reset_calibration") engine.resetCalibration(*object);
         else if (name == "test_marker") engine.emitTestMarker(*object);

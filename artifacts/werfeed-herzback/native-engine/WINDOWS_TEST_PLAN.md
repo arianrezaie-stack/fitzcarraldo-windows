@@ -54,8 +54,8 @@ regression.
 
 The session also keeps one four-route native process running while it exercises
 route arming changes. The saved `notch-redistribution-*.jsonl` evidence must
-show capacities of `6,6,6,6`, then `8,8,8,0`, `12,12,0,0`, and
-`24,0,0,0`, followed by `12,12,0,0`, `8,8,8,0`, and `6,6,6,6` again.
+show capacities of `8,8,8,8`, then `11,11,10,0`, `16,16,0,0`, and
+`32,0,0,0`, followed by `16,16,0,0`, `11,11,10,0`, and `8,8,8,8` again.
 Each step must retain four route records, report `running: true`, keep active
 cuts within capacity, and report zero active cuts for disarmed routes. The
 validator also rejects engine errors, stop events, missing health telemetry,
@@ -150,7 +150,7 @@ For each preset, attach these observations to the results file:
 
 The engine telemetry is cumulative for each run. `xruns` must remain zero,
 `nonFiniteOutputSamples` must remain zero, `activeNotches` must never exceed
-`maximumAllowedNotches` (six), and `maximumCutDb` must remain no deeper than
+`maximumAllowedNotches` (eight for four active routes), and `maximumCutDb` must remain no deeper than
 -12 dB for speech or -9 dB for music. A passing automated summary does not
 override a failed audible observation.
 
