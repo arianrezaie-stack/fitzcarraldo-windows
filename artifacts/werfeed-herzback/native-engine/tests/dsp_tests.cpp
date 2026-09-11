@@ -91,6 +91,11 @@ int main() {
     assert(calibratedBias[95] > 0.0f);
     assert(calibratedBias[94] > 0.0f);
     assert(calibratedBias[93] == 0.0f);
+    assert(std::abs(werfeed::notchQuality(100.0f) - 9.0f) < 0.01f);
+    assert(std::abs(werfeed::notchQuality(500.0f) - 11.0f) < 0.01f);
+    assert(std::abs(werfeed::notchQuality(1000.0f) - 14.0f) < 0.01f);
+    assert(std::abs(werfeed::notchQuality(4000.0f) - 20.0f) < 0.01f);
+    assert(std::abs(werfeed::notchQuality(10000.0f) - 30.0f) < 0.01f);
 
     werfeed::FeedbackProcessor processor;
     processor.prepare(rate);
@@ -110,7 +115,7 @@ int main() {
     const auto snapshot = processor.snapshot();
     assert(snapshot.activeNotches > 0);
     assert(snapshot.activeNotches <= static_cast<int>(werfeed::maxNotches));
-    assert(snapshot.maximumCutDb >= -18.1f && snapshot.maximumCutDb <= -17.4f);
+    assert(snapshot.maximumCutDb >= -20.1f && snapshot.maximumCutDb <= -19.4f);
     const auto active = *std::min_element(snapshot.notches.begin(), snapshot.notches.end(),
         [](const werfeed::NotchSnapshot& a, const werfeed::NotchSnapshot& b) {
             const auto aDistance = a.active ? std::abs(std::log2(a.frequency / 1000.0f)) : 1000.0f;
@@ -160,13 +165,15 @@ int main() {
             releaseTone.process(0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
         const auto releaseSnapshot = releaseTone.snapshot();
         assert(releaseSnapshot.activeNotches == 1);
-        assert(releaseSnapshot.maximumCutDb <= -17.4f);
+        assert(releaseSnapshot.maximumCutDb <= -19.4f);
         assert(std::any_of(releaseSnapshot.notches.begin(), releaseSnapshot.notches.end(),
             [frequency](const werfeed::NotchSnapshot& notch) {
                 return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.02f
                     && notch.q < 10.0f;
             }));
         for (int i = 0; i < 48000; ++i) releaseTone.process(0.0f);
+        assert(releaseTone.snapshot().activeNotches == 1);
+        for (int i = 0; i < 180000; ++i) releaseTone.process(0.0f);
         assert(releaseTone.snapshot().activeNotches == 0);
     }
     // The new speech scale reaches the former -12 dB maximum at 70%.
@@ -214,7 +221,7 @@ int main() {
     assert(calibratedHotspot.snapshot().activeNotches > 0);
     for (int i = 0; i < 24000; ++i) calibratedHotspot.process(0.0f);
     assert(calibratedHotspot.snapshot().activeNotches > 0);
-    for (int i = 0; i < 72000; ++i) calibratedHotspot.process(0.0f);
+    for (int i = 0; i < 240000; ++i) calibratedHotspot.process(0.0f);
     assert(calibratedHotspot.snapshot().activeNotches == 0);
     werfeed::FeedbackProcessor twoTone;
     twoTone.prepare(rate); twoTone.clearBaseline(); twoTone.setEnabled(true);

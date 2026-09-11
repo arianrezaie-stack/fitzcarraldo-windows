@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace werfeed {
@@ -161,6 +162,35 @@ inline std::array<float, analyzerBins> detectionBaseline(
     return result;
 }
 
+inline float notchQuality(float frequency) noexcept {
+    constexpr std::array<std::pair<float, float>, 5> reference {{
+        {100.0f, 9.0f}, {500.0f, 11.0f}, {1000.0f, 14.0f},
+        {4000.0f, 20.0f}, {10000.0f, 30.0f},
+    }};
+    if (frequency <= reference.front().first) {
+        return std::max(7.0f, 9.0f - 2.0f * std::log2(
+            reference.front().first / std::max(20.0f, frequency)));
+    }
+    for (std::size_t i = 1; i < reference.size(); ++i) {
+        if (frequency <= reference[i].first) {
+            const auto low = reference[i - 1];
+            const auto high = reference[i];
+            const auto position = std::log(frequency / low.first) /
+                std::log(high.first / low.first);
+            return low.second + (high.second - low.second) *
+                static_cast<float>(position);
+        }
+    }
+    return std::min(38.0f, 30.0f + 5.0f * std::log2(frequency / 10000.0f));
+}
+
+inline float maximumSuppressionDepth(float amount) noexcept {
+    const auto clamped = std::clamp(amount, 0.0f, 1.0f);
+    const auto core = std::min(1.0f, clamped / 0.7f);
+    const auto extension = std::clamp((clamped - 0.7f) / 0.3f, 0.0f, 1.0f);
+    return -(12.0f * core + 8.0f * extension);
+}
+
 class FeedbackProcessor {
 public:
     void prepare(double newSampleRate) noexcept {
@@ -250,6 +280,8 @@ private:
     struct Notch {
         float frequency = 0, q = 8, currentDepthDb = 0, targetDepthDb = 0;
         bool calibrationHotspot = false;
+        int releaseHoldFrames = 8;
+        int quietFrames = 0;
         float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
         float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
         int coefficientCountdown = 0;
@@ -315,8 +347,8 @@ private:
         // Speech 70% matches the previous 100% threshold. The upper 30% lowers
         // the threshold further without changing Music's conservative gate.
         const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech
-            ? 12.0f - 6.0f * speechCore - 3.0f * speechExtension
-            : 15.0f;
+            ? 12.0f - 6.0f * speechCore - 4.5f * speechExtension
+            : 10.0f - 2.0f * std::min(1.0f, amount);
         notchSeen.fill(false);
         for (std::size_t bin = 0; bin < analyzerBins; ++bin) {
             const auto position = static_cast<float>(bin) / static_cast<float>(analyzerBins - 1);
@@ -370,7 +402,7 @@ private:
             const auto measuredPeakBias =
                 calibrationPeakBias[baselineBin].load(std::memory_order_relaxed);
             const auto calibratedEngageThreshold = std::max(
-                1.5f, engageAboveBaseline - std::min(3.0f, measuredPeakBias * 0.4f));
+                1.0f, engageAboveBaseline - std::min(3.0f, measuredPeakBias * 0.4f));
             // Broad speech fundamentals and harmonics are less likely to pass
             // this wider neighborhood comparison than a narrow room howl.
             const auto tonal = level - neighborhoodLevel;
@@ -437,9 +469,13 @@ private:
             // Release from candidate absence as well as level. This prevents a
             // stale low-frequency notch from re-engaging itself after the room
             // has gone quiet.
-            notch.targetDepthDb = std::min(
-                0.0f,
-                notch.targetDepthDb + (notch.calibrationHotspot ? 0.10f : 0.25f));
+            ++notch.quietFrames;
+            if (notch.quietFrames <= notch.releaseHoldFrames) continue;
+            const auto amount = getSuppressionAmount();
+            const auto ordinaryReleaseStep = 0.16f - 0.10f * amount;
+            const auto releaseStep = notch.calibrationHotspot
+                ? ordinaryReleaseStep * 0.4f : ordinaryReleaseStep;
+            notch.targetDepthDb = std::min(0.0f, notch.targetDepthDb + releaseStep);
             if (notch.targetDepthDb >= -0.1f && notch.currentDepthDb > -0.5f)
                 notch = {};
         }
@@ -475,13 +511,10 @@ private:
                 [](const Notch& a, const Notch& b) { return a.currentDepthDb < b.currentDepthDb; });
         const auto selectedIndex = static_cast<std::size_t>(selected - states.data());
         notchSeen[selectedIndex] = true;
+        selected->quietFrames = 0;
         const auto amount = getSuppressionAmount();
         if (amount <= 0.001f) return;
-        const auto speechCore = std::min(1.0f, amount / 0.7f);
-        const auto speechExtension = std::clamp((amount - 0.7f) / 0.3f, 0.0f, 1.0f);
-        const auto maximumDepth = selectedPreset == ProtectionPreset::speech
-            ? -(12.0f * speechCore + 6.0f * speechExtension)
-            : -amount * 12.0f;
+        const auto maximumDepth = maximumSuppressionDepth(amount);
         const auto centerBin = std::clamp<std::size_t>(
             static_cast<std::size_t>(std::lround(frequency * fftSize / sampleRate)),
             1, fftSize / 2 - 1);
@@ -506,9 +539,9 @@ private:
         selected->frequency = std::clamp(static_cast<float>(
             (static_cast<float>(centerBin) + interpolation) * sampleRate / fftSize), 40.0f,
             static_cast<float>(sampleRate * 0.45));
-        selected->q = frequency < 300.0f
-            ? 2.0f + 10.0f * std::clamp(frequency / 300.0f, 0.0f, 1.0f)
-            : (selectedPreset == ProtectionPreset::speech ? 18.0f : 16.0f);
+        selected->q = notchQuality(selected->frequency);
+        selected->releaseHoldFrames = static_cast<int>(
+            8.0f + 20.0f * amount + (calibrationHotspot ? 24.0f : 0.0f));
         // Reach useful attenuation on the first engaged frame, then let the
         // next frames move to the route's chosen maximum cut.
         selected->targetDepthDb = std::max(

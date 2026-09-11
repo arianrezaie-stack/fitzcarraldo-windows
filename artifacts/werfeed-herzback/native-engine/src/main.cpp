@@ -185,7 +185,10 @@ public:
         const auto rate = sampleRate.load();
         if (rate < 8000.0) { calibrationBusy.store(false); error("audio device sample rate is unavailable"); return; }
         const auto announcementPath = getPropertyOr(command, "announcementPath", "").toString();
-        if (!loadCalibrationAnnouncement(announcementPath, rate, level)) {
+        // Keep the spoken safety announcement clearly audible without
+        // increasing the impulse/sweep level used by the measurement.
+        if (!loadCalibrationAnnouncement(announcementPath, rate,
+                std::min(0.12f, level * 1.5f))) {
             calibrationBusy.store(false);
             return;
         }
@@ -685,7 +688,7 @@ int main() {
         auto* hello = new juce::DynamicObject();
         hello->setProperty("type", "hello");
         hello->setProperty("protocolVersion", 1);
-        hello->setProperty("engineVersion", "0.1.6");
+        hello->setProperty("engineVersion", "0.1.7");
         emit(juce::var(hello));
     }
     std::atomic_bool done { false };
