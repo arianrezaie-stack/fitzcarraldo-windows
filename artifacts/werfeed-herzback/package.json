@@ -1,6 +1,6 @@
 {
   "name": "@workspace/werfeed-herzback",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Werfeed Herzback live feedback protection control surface.",
   "author": "Werfeed Herzback",
   "private": true,

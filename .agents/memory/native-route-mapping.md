@@ -26,3 +26,9 @@ Named endpoints must also survive discovery when an unopened JUCE device reports
 **Why:** Some Windows WASAPI and ASIO drivers defer channel metadata until the endpoint is opened; using pre-open channel metadata as an enumeration gate leaves both selectors empty.
 
 **How to apply:** Treat `getDeviceNames()` as the discovery authority. Use channel names and masks when available, but never require them to emit the endpoint record.
+
+The device-name-first discovery fallback and native ASIO build were confirmed working on physical Windows hardware.
+
+**Why:** A real portable-app run populated the separate input/output mappings, opened ASIO successfully, and improved live DSP behavior.
+
+**How to apply:** Preserve this discovery/open boundary during future mapping changes; treat the named-endpoint fallback as the known-good baseline rather than restoring pre-open channel gates.

@@ -83,9 +83,14 @@ int main() {
     calibrationPeaks.fill(0.0f);
     calibrationPeaks[96] = 12.0f;
     const auto calibratedBaseline = werfeed::detectionBaseline(calibrationPeaks);
+    const auto calibratedBias = werfeed::calibrationBiasFromResponse(calibrationPeaks);
     assert(calibratedBaseline[96] < calibratedBaseline[95]);
     assert(calibratedBaseline[96] <= -61.0f);
     assert(calibratedBaseline[20] == -55.0f);
+    assert(calibratedBias[96] >= 6.0f);
+    assert(calibratedBias[95] > 0.0f);
+    assert(calibratedBias[94] > 0.0f);
+    assert(calibratedBias[93] == 0.0f);
 
     werfeed::FeedbackProcessor processor;
     processor.prepare(rate);
@@ -105,7 +110,7 @@ int main() {
     const auto snapshot = processor.snapshot();
     assert(snapshot.activeNotches > 0);
     assert(snapshot.activeNotches <= static_cast<int>(werfeed::maxNotches));
-    assert(snapshot.maximumCutDb >= -12.1f && snapshot.maximumCutDb <= -11.5f);
+    assert(snapshot.maximumCutDb >= -18.1f && snapshot.maximumCutDb <= -17.4f);
     const auto active = *std::min_element(snapshot.notches.begin(), snapshot.notches.end(),
         [](const werfeed::NotchSnapshot& a, const werfeed::NotchSnapshot& b) {
             const auto aDistance = a.active ? std::abs(std::log2(a.frequency / 1000.0f)) : 1000.0f;
@@ -137,8 +142,13 @@ int main() {
     // gate while still passing the tonal and persistence checks.
     werfeed::FeedbackProcessor quietFeedback;
     quietFeedback.prepare(rate); quietFeedback.clearBaseline(); quietFeedback.setEnabled(true);
-    for (int i = 0; i < 144000; ++i)
+    int firstEngagedSample = -1;
+    for (int i = 0; i < 144000; ++i) {
         quietFeedback.process(0.006f * std::sin(2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
+        if (firstEngagedSample < 0 && quietFeedback.snapshot().activeNotches > 0)
+            firstEngagedSample = i;
+    }
+    assert(firstEngagedSample >= 0 && firstEngagedSample < 4500);
     assert(quietFeedback.snapshot().activeNotches > 0);
     // Notch release is generic behavior, not a special case for 70 Hz:
     // exercise it at two representative low-frequency tones.
@@ -150,7 +160,7 @@ int main() {
             releaseTone.process(0.3f * std::sin(2.0f * werfeed::pi * frequency * i / 48000.0f));
         const auto releaseSnapshot = releaseTone.snapshot();
         assert(releaseSnapshot.activeNotches == 1);
-        assert(releaseSnapshot.maximumCutDb <= -11.5f);
+        assert(releaseSnapshot.maximumCutDb <= -17.4f);
         assert(std::any_of(releaseSnapshot.notches.begin(), releaseSnapshot.notches.end(),
             [frequency](const werfeed::NotchSnapshot& notch) {
                 return notch.active && std::abs(notch.frequency - frequency) / frequency < 0.02f
@@ -159,6 +169,53 @@ int main() {
         for (int i = 0; i < 48000; ++i) releaseTone.process(0.0f);
         assert(releaseTone.snapshot().activeNotches == 0);
     }
+    // The new speech scale reaches the former -12 dB maximum at 70%.
+    werfeed::FeedbackProcessor seventyPercent;
+    seventyPercent.prepare(rate); seventyPercent.setBaseline(baseline);
+    seventyPercent.setEnabled(true); seventyPercent.setSuppressionAmount(0.7f);
+    for (int i = 0; i < 96000; ++i)
+        seventyPercent.process(0.3f * std::sin(
+            2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
+    const auto seventySnapshot = seventyPercent.snapshot();
+    assert(seventySnapshot.maximumCutDb >= -12.1f &&
+           seventySnapshot.maximumCutDb <= -11.5f);
+    // The upper 30% of Speech lowers the threshold beyond the former maximum.
+    werfeed::FeedbackProcessor thresholdAtSeventy;
+    thresholdAtSeventy.prepare(rate); thresholdAtSeventy.clearBaseline();
+    thresholdAtSeventy.setEnabled(true); thresholdAtSeventy.setSuppressionAmount(0.7f);
+    werfeed::FeedbackProcessor thresholdAtHundred;
+    thresholdAtHundred.prepare(rate); thresholdAtHundred.clearBaseline();
+    thresholdAtHundred.setEnabled(true); thresholdAtHundred.setSuppressionAmount(1.0f);
+    for (int i = 0; i < 96000; ++i) {
+        const auto borderlineTone = 0.003f * std::sin(
+            2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
+        thresholdAtSeventy.process(borderlineTone);
+        thresholdAtHundred.process(borderlineTone);
+    }
+    assert(thresholdAtSeventy.snapshot().activeNotches == 0);
+    assert(thresholdAtHundred.snapshot().activeNotches > 0);
+
+    // A calibrated resonance remains protected longer than an ordinary tone.
+    constexpr float hotspotFrequency = 1000.0f;
+    const auto hotspotBin = static_cast<std::size_t>(std::lround(
+        std::log10(hotspotFrequency / 20.0f) / std::log10(1000.0f) *
+        static_cast<float>(werfeed::analyzerBins - 1)));
+    std::array<float, werfeed::analyzerBins> hotspotResponse {};
+    hotspotResponse.fill(0.0f);
+    hotspotResponse[hotspotBin] = 14.0f;
+    werfeed::FeedbackProcessor calibratedHotspot;
+    calibratedHotspot.prepare(rate);
+    calibratedHotspot.setCalibrationProfile(hotspotResponse);
+    calibratedHotspot.setEnabled(true);
+    calibratedHotspot.setSuppressionAmount(1.0f);
+    for (int i = 0; i < 96000; ++i)
+        calibratedHotspot.process(0.04f * std::sin(
+            2.0f * werfeed::pi * hotspotFrequency * i / 48000.0f));
+    assert(calibratedHotspot.snapshot().activeNotches > 0);
+    for (int i = 0; i < 24000; ++i) calibratedHotspot.process(0.0f);
+    assert(calibratedHotspot.snapshot().activeNotches > 0);
+    for (int i = 0; i < 72000; ++i) calibratedHotspot.process(0.0f);
+    assert(calibratedHotspot.snapshot().activeNotches == 0);
     werfeed::FeedbackProcessor twoTone;
     twoTone.prepare(rate); twoTone.clearBaseline(); twoTone.setEnabled(true);
     for (int i = 0; i < 144000; ++i) {

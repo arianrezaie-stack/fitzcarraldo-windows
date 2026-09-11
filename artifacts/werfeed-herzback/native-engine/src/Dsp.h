@@ -131,21 +131,32 @@ inline std::array<float, analyzerBins> measureResponse(
     return result;
 }
 
-inline std::array<float, analyzerBins> detectionBaseline(
+inline std::array<float, analyzerBins> calibrationBiasFromResponse(
     const std::array<float, analyzerBins>& responseDb) noexcept {
     auto sorted = responseDb;
     std::sort(sorted.begin(), sorted.end());
     const auto median = sorted[sorted.size() / 2];
+    std::array<float, analyzerBins> peakBias {};
+    for (std::size_t i = 0; i < peakBias.size(); ++i) {
+        const auto peakAboveMedian = std::max(0.0f, responseDb[i] - median - 3.0f);
+        const auto centerBias = std::min(9.0f, peakAboveMedian * 0.75f);
+        peakBias[i] = std::max(peakBias[i], centerBias);
+        if (i > 0) peakBias[i - 1] = std::max(peakBias[i - 1], centerBias * 0.7f);
+        if (i + 1 < peakBias.size()) peakBias[i + 1] = std::max(peakBias[i + 1], centerBias * 0.7f);
+        if (i > 1) peakBias[i - 2] = std::max(peakBias[i - 2], centerBias * 0.35f);
+        if (i + 2 < peakBias.size()) peakBias[i + 2] = std::max(peakBias[i + 2], centerBias * 0.35f);
+    }
+    return peakBias;
+}
+
+inline std::array<float, analyzerBins> detectionBaseline(
+    const std::array<float, analyzerBins>& responseDb) noexcept {
+    const auto peakBias = calibrationBiasFromResponse(responseDb);
     std::array<float, analyzerBins> result {};
     for (std::size_t i = 0; i < result.size(); ++i) {
-        // A positive calibrated response peak identifies a frequency where
-        // the acoustic loop is more likely to become unstable. Move its
-        // effective detector baseline downward so the live detector engages
-        // earlier there; do not make ordinary response valleys harder to
-        // protect than the uncalibrated baseline.
-        const auto peakAboveMedian = std::max(0.0f, responseDb[i] - median - 3.0f);
-        const auto peakBiasDb = std::min(9.0f, peakAboveMedian * 0.75f);
-        result[i] = -55.0f - peakBiasDb;
+        // Spread a measured resonance across adjacent logarithmic bins so a
+        // live FFT peak need not land on the exact calibration bin.
+        result[i] = -55.0f - peakBias[i];
     }
     return result;
 }
@@ -157,7 +168,10 @@ public:
         reset();
     }
     void clearBaseline() noexcept {
-        for (auto& value : baseline) value.store(-55.0f, std::memory_order_relaxed);
+        for (std::size_t i = 0; i < analyzerBins; ++i) {
+            baseline[i].store(-55.0f, std::memory_order_relaxed);
+            calibrationPeakBias[i].store(0.0f, std::memory_order_relaxed);
+        }
     }
     void reset() noexcept {
         detectorSamples = 0;
@@ -185,8 +199,18 @@ public:
         return suppressionAmount.load(std::memory_order_relaxed);
     }
     void setBaseline(const std::array<float, analyzerBins>& value) noexcept {
-        for (std::size_t i = 0; i < analyzerBins; ++i)
+        for (std::size_t i = 0; i < analyzerBins; ++i) {
             baseline[i].store(value[i], std::memory_order_relaxed);
+            calibrationPeakBias[i].store(0.0f, std::memory_order_relaxed);
+        }
+    }
+    void setCalibrationProfile(const std::array<float, analyzerBins>& responseDb) noexcept {
+        const auto calibratedBaseline = detectionBaseline(responseDb);
+        const auto calibratedPeakBias = calibrationBiasFromResponse(responseDb);
+        for (std::size_t i = 0; i < analyzerBins; ++i) {
+            baseline[i].store(calibratedBaseline[i], std::memory_order_relaxed);
+            calibrationPeakBias[i].store(calibratedPeakBias[i], std::memory_order_relaxed);
+        }
     }
 
     float process(float sample) noexcept {
@@ -225,12 +249,15 @@ public:
 private:
     struct Notch {
         float frequency = 0, q = 8, currentDepthDb = 0, targetDepthDb = 0;
+        bool calibrationHotspot = false;
         float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
         float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
         int coefficientCountdown = 0;
         double sampleRate = 48000;
         float process(float x) noexcept {
-            currentDepthDb += (targetDepthDb - currentDepthDb) * 0.0008f;
+            const auto movingDeeper = targetDepthDb < currentDepthDb;
+            const auto smoothing = movingDeeper ? 0.0014f : 0.00025f;
+            currentDepthDb += (targetDepthDb - currentDepthDb) * smoothing;
             if (std::abs(currentDepthDb) < 0.005f || frequency <= 0) return x;
             if (coefficientCountdown-- <= 0) {
                 coefficientCountdown = 31;
@@ -282,11 +309,14 @@ private:
             }
         }
         const auto selectedPreset = preset.load(std::memory_order_relaxed);
-        // Speech feedback can be audible before it reaches the old 12 dB gate.
-        // Keep the tonal and persistence checks in place, but let the notch
-        // start from a lower calibrated excess level without making Music mode
-        // more eager to notch program material.
-        const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech ? 6.0f : 15.0f;
+        const auto amount = getSuppressionAmount();
+        const auto speechCore = std::min(1.0f, amount / 0.7f);
+        const auto speechExtension = std::clamp((amount - 0.7f) / 0.3f, 0.0f, 1.0f);
+        // Speech 70% matches the previous 100% threshold. The upper 30% lowers
+        // the threshold further without changing Music's conservative gate.
+        const auto engageAboveBaseline = selectedPreset == ProtectionPreset::speech
+            ? 12.0f - 6.0f * speechCore - 3.0f * speechExtension
+            : 15.0f;
         notchSeen.fill(false);
         for (std::size_t bin = 0; bin < analyzerBins; ++bin) {
             const auto position = static_cast<float>(bin) / static_cast<float>(analyzerBins - 1);
@@ -304,7 +334,7 @@ private:
         // The overlapping hop makes three speech frames about 16 ms apart while
         // still requiring a stable, rising tonal peak rather than a single
         // voice or music bin.
-        const auto requiredFrames = selectedPreset == ProtectionPreset::speech ? 2 : 24;
+        const auto requiredFrames = selectedPreset == ProtectionPreset::speech ? 1 : 24;
         const auto firstBin = std::max<std::size_t>(2, static_cast<std::size_t>(40.0 * fftSize / sampleRate));
         const auto lastBin = std::min<std::size_t>(fftSize / 2 - 2,
             static_cast<std::size_t>(std::min(20000.0, sampleRate * 0.45) * fftSize / sampleRate));
@@ -337,6 +367,10 @@ private:
                     static_cast<double>(std::max<std::size_t>(1, neighborhoodBins))) /
                 static_cast<float>(fftSize) + 1.0e-9f);
             const auto excess = level - baseline[baselineBin].load(std::memory_order_relaxed);
+            const auto measuredPeakBias =
+                calibrationPeakBias[baselineBin].load(std::memory_order_relaxed);
+            const auto calibratedEngageThreshold = std::max(
+                1.5f, engageAboveBaseline - std::min(3.0f, measuredPeakBias * 0.4f));
             // Broad speech fundamentals and harmonics are less likely to pass
             // this wider neighborhood comparison than a narrow room howl.
             const auto tonal = level - neighborhoodLevel;
@@ -353,8 +387,8 @@ private:
             // transient rise. The former 24 dB floor blocked quieter howls
             // even after the baseline threshold had been lowered.
             const auto stableStrongPeak = selectedPreset == ProtectionPreset::speech
-                ? excess >= engageAboveBaseline : excess >= 24.0f;
-            if (localPeak && excess >= engageAboveBaseline && tonal >= tonalThreshold &&
+                ? excess >= calibratedEngageThreshold : excess >= 24.0f;
+            if (localPeak && excess >= calibratedEngageThreshold && tonal >= tonalThreshold &&
                 (risingPeak || stableStrongPeak)) {
                 persistence[fftBin] = static_cast<unsigned char>(
                     std::min<int>(255, persistence[fftBin] + 1));
@@ -383,7 +417,18 @@ private:
                 [candidate](std::size_t other) { return std::abs(static_cast<int>(other) - static_cast<int>(candidate)) < 2; });
             if (distinct) {
                 engagedBins[engagedCount++] = candidate;
-                engageFrequency(static_cast<float>(candidate * sampleRate / fftSize), selectedPreset);
+                const auto candidateFrequency =
+                    static_cast<float>(candidate * sampleRate / fftSize);
+                const auto candidateLogPosition =
+                    std::log10(candidateFrequency / 20.0f) / std::log10(1000.0f);
+                const auto candidateBaselineBin = std::clamp<std::size_t>(
+                    static_cast<std::size_t>(std::lround(
+                        candidateLogPosition * (analyzerBins - 1))),
+                    0, analyzerBins - 1);
+                const auto calibrationHotspot =
+                    calibrationPeakBias[candidateBaselineBin].load(
+                        std::memory_order_relaxed) >= 1.5f;
+                engageFrequency(candidateFrequency, selectedPreset, calibrationHotspot);
             }
         }
         for (std::size_t i = 0; i < states.size(); ++i) {
@@ -392,7 +437,9 @@ private:
             // Release from candidate absence as well as level. This prevents a
             // stale low-frequency notch from re-engaging itself after the room
             // has gone quiet.
-            notch.targetDepthDb = std::min(0.0f, notch.targetDepthDb + 1.5f);
+            notch.targetDepthDb = std::min(
+                0.0f,
+                notch.targetDepthDb + (notch.calibrationHotspot ? 0.10f : 0.25f));
             if (notch.targetDepthDb >= -0.1f && notch.currentDepthDb > -0.5f)
                 notch = {};
         }
@@ -407,7 +454,8 @@ private:
                   analysisBuffer.end(), analysisBuffer.begin());
         detectorSamples = fftSize - analysisHop;
     }
-    void engageFrequency(float frequency, ProtectionPreset selectedPreset) noexcept {
+    void engageFrequency(float frequency, ProtectionPreset selectedPreset,
+                         bool calibrationHotspot) noexcept {
         Notch* selected = nullptr;
         for (auto& notch : states) {
             if (notch.frequency > 0 && std::abs(std::log2(notch.frequency / frequency)) < 0.08f) {
@@ -429,7 +477,11 @@ private:
         notchSeen[selectedIndex] = true;
         const auto amount = getSuppressionAmount();
         if (amount <= 0.001f) return;
-        const auto maximumDepth = -amount * 12.0f;
+        const auto speechCore = std::min(1.0f, amount / 0.7f);
+        const auto speechExtension = std::clamp((amount - 0.7f) / 0.3f, 0.0f, 1.0f);
+        const auto maximumDepth = selectedPreset == ProtectionPreset::speech
+            ? -(12.0f * speechCore + 6.0f * speechExtension)
+            : -amount * 12.0f;
         const auto centerBin = std::clamp<std::size_t>(
             static_cast<std::size_t>(std::lround(frequency * fftSize / sampleRate)),
             1, fftSize / 2 - 1);
@@ -449,6 +501,8 @@ private:
             ? std::clamp(0.5f * (leftLog - rightLog) / curvature, -0.5f, 0.5f)
             : 0.0f;
         selected->sampleRate = sampleRate;
+        selected->calibrationHotspot =
+            selected->calibrationHotspot || calibrationHotspot;
         selected->frequency = std::clamp(static_cast<float>(
             (static_cast<float>(centerBin) + interpolation) * sampleRate / fftSize), 40.0f,
             static_cast<float>(sampleRate * 0.45));
@@ -457,7 +511,9 @@ private:
             : (selectedPreset == ProtectionPreset::speech ? 18.0f : 16.0f);
         // Reach useful attenuation on the first engaged frame, then let the
         // next frames move to the route's chosen maximum cut.
-        selected->targetDepthDb = std::max(selected->targetDepthDb - 4.5f, maximumDepth);
+        selected->targetDepthDb = std::max(
+            selected->targetDepthDb - (calibrationHotspot ? 6.0f : 5.0f),
+            maximumDepth);
     }
     static constexpr std::size_t fftSize = 4096;
     static constexpr std::size_t analysisHop = 256;
@@ -471,6 +527,7 @@ private:
     std::array<bool, maxNotches> notchSeen {};
     std::array<float, analyzerBins> spectrumDb {};
     std::array<std::atomic<float>, analyzerBins> baseline {};
+    std::array<std::atomic<float>, analyzerBins> calibrationPeakBias {};
     std::array<Notch, maxNotches> states {};
     std::array<std::atomic<float>, analyzerBins> publishedSpectrum {};
     std::array<std::atomic<float>, maxNotches> publishedFrequency {}, publishedDepth {}, publishedQ {};

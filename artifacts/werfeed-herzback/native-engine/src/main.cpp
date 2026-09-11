@@ -109,7 +109,7 @@ public:
             processor.setEnabled(protectionEnabled.load(std::memory_order_relaxed));
             processor.clearBaseline();
             const auto found = baselines.find(keyForRoute(routeIndex));
-            if (found != baselines.end()) processor.setBaseline(werfeed::detectionBaseline(found->second.responseDb));
+            if (found != baselines.end()) processor.setCalibrationProfile(found->second.responseDb);
         }
         configured.store(true);
         emitState("configured");
@@ -447,8 +447,7 @@ public:
             rate, delay);
         const auto calibrationKey = calibrationRouteKey;
         baselines[calibrationKey] = { delay, response };
-        const auto detectorBaseline = werfeed::detectionBaseline(response);
-        processors[static_cast<std::size_t>(calibrationRoute)].setBaseline(detectorBaseline);
+        processors[static_cast<std::size_t>(calibrationRoute)].setCalibrationProfile(response);
         if (!saveCalibrations()) error("calibration completed but its baseline could not be persisted");
         auto* o = new juce::DynamicObject();
         o->setProperty("type", "calibration");
@@ -686,7 +685,7 @@ int main() {
         auto* hello = new juce::DynamicObject();
         hello->setProperty("type", "hello");
         hello->setProperty("protocolVersion", 1);
-        hello->setProperty("engineVersion", "0.1.0");
+        hello->setProperty("engineVersion", "0.1.6");
         emit(juce::var(hello));
     }
     std::atomic_bool done { false };
