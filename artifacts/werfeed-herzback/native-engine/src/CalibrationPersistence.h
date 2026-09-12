@@ -11,6 +11,7 @@ namespace werfeed {
 struct CalibrationBaseline {
     int delaySamples = 0;
     std::array<float, analyzerBins> responseDb {};
+    std::array<float, analyzerBins> rawResponseDb {};
 };
 
 inline void loadCalibrationBaselines(
@@ -31,6 +32,14 @@ inline void loadCalibrationBaselines(
             baseline.responseDb[i] = static_cast<float>(
                 static_cast<double>(response->getReference(static_cast<int>(i))));
         }
+        auto* rawResponse = object->getProperty("rawResponseDb").getArray();
+        for (std::size_t i = 0; i < analyzerBins; ++i) {
+            baseline.rawResponseDb[i] = rawResponse &&
+                rawResponse->size() == static_cast<int>(analyzerBins)
+                ? static_cast<float>(static_cast<double>(
+                    rawResponse->getReference(static_cast<int>(i))))
+                : baseline.responseDb[i];
+        }
         baselines[property.name.toString()] = baseline;
     }
 }
@@ -45,6 +54,9 @@ inline bool saveCalibrationBaselines(
         juce::Array<juce::var> response;
         for (const auto value : baseline.responseDb) response.add(value);
         object->setProperty("responseDb", juce::var(response));
+        juce::Array<juce::var> rawResponse;
+        for (const auto value : baseline.rawResponseDb) rawResponse.add(value);
+        object->setProperty("rawResponseDb", juce::var(rawResponse));
         root->setProperty(key, juce::var(object));
     }
 

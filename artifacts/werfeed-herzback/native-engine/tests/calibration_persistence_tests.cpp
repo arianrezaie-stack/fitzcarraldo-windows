@@ -9,6 +9,8 @@ werfeed::CalibrationBaseline baseline(int delaySamples, float firstResponse) {
     result.delaySamples = delaySamples;
     result.responseDb.fill(firstResponse);
     result.responseDb[1] = firstResponse + 1.0f;
+    result.rawResponseDb.fill(firstResponse - 4.0f);
+    result.rawResponseDb[1] = firstResponse - 3.0f;
     return result;
 }
 
@@ -24,7 +26,8 @@ bool requireBaseline(const std::map<juce::String, werfeed::CalibrationBaseline>&
     const auto found = baselines.find(key);
     return require(found != baselines.end(), message) &&
         require(found->second.delaySamples == expected.delaySamples, message) &&
-        require(found->second.responseDb == expected.responseDb, message);
+        require(found->second.responseDb == expected.responseDb, message) &&
+        require(found->second.rawResponseDb == expected.rawResponseDb, message);
 }
 
 } // namespace
