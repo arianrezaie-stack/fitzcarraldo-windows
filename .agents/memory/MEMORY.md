@@ -14,4 +14,4 @@
 - [Persistent feedback cuts](persistent-feedback-cuts.md) — recurring and manual cuts must be native-owned state, not renderer-only annotations.
 - [Two-stage feedback probe](two-stage-feedback-probe.md) — shallow native probe plus raw-source reassessment prevents normal tones from receiving full notches.
 - [Clock telemetry](clock-telemetry.md) — keep callback scheduling jitter, deadline misses, driver xruns, and device-clock drift as separate readings.
-- [Calibration reference normalization](calibration-reference-normalization.md) — use one 200 Hz–10 kHz offset, then shift the entire 20 Hz–20 kHz curve without changing its shape.
+- [Calibration reference normalization](calibration-reference-normalization.md) — target a −3 dB median across the full 20 Hz–20 kHz curve with one constant offset.

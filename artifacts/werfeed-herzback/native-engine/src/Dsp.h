@@ -169,25 +169,15 @@ inline std::array<float, analyzerBins> calibrationBiasFromResponse(
 
 inline std::array<float, analyzerBins> normalizeCalibrationResponse(
     const std::array<float, analyzerBins>& responseDb) noexcept {
-    constexpr float normalizationStartHz = 200.0f;
-    constexpr float normalizationEndHz = 10000.0f;
-    double sum = 0.0;
-    std::size_t count = 0;
-    for (std::size_t bin = 0; bin < analyzerBins; ++bin) {
-        const auto position = static_cast<float>(bin) /
-            static_cast<float>(analyzerBins - 1);
-        const auto frequency = 20.0f * std::pow(1000.0f, position);
-        if (frequency < normalizationStartHz || frequency > normalizationEndHz ||
-            !std::isfinite(responseDb[bin]))
-            continue;
-        sum += responseDb[bin];
-        ++count;
-    }
-    const auto mean = count > 0 ? static_cast<float>(sum /
-        static_cast<double>(count)) : 0.0f;
+    constexpr float targetMedianDb = -3.0f;
+    auto sorted = responseDb;
+    std::sort(sorted.begin(), sorted.end());
+    const auto median = 0.5f * (sorted[(sorted.size() - 1) / 2] +
+                                sorted[sorted.size() / 2]);
+    const auto offset = targetMedianDb - median;
     std::array<float, analyzerBins> normalized {};
     for (std::size_t bin = 0; bin < analyzerBins; ++bin)
-        normalized[bin] = responseDb[bin] - mean;
+        normalized[bin] = responseDb[bin] + offset;
     return normalized;
 }
 

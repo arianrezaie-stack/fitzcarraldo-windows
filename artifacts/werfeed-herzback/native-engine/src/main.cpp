@@ -603,6 +603,9 @@ public:
                 juce::Array<juce::var> response;
                 for (const auto value : found->second.responseDb) response.add(value);
                 routeObject->setProperty("calibrationResponseDb", juce::var(response));
+                juce::Array<juce::var> rawResponse;
+                for (const auto value : found->second.rawResponseDb) rawResponse.add(value);
+                routeObject->setProperty("calibrationRawResponseDb", juce::var(rawResponse));
             }
             routeTelemetry.add(juce::var(routeObject));
             if (routeIndex == 0) {
@@ -662,12 +665,12 @@ public:
             std::span<const float>(calibrationRecording).subspan(sweepOffset),
             rate, delay);
         // Calibration gain depends heavily on the physical playback and
-        // microphone levels. Remove only the broadband offset so the response
-        // keeps its frequency-relative shape while its 200 Hz–10 kHz mean is
-        // the 0 dB reference used by the result chart.
+        // microphone levels. Shift the entire response by one scalar so the
+        // median amplitude of the full measured spectrum sits at -3 dB while
+        // preserving its frequency-relative shape.
         const auto response = werfeed::normalizeCalibrationResponse(measuredResponse);
         const auto calibrationKey = calibrationRouteKey;
-        baselines[calibrationKey] = { delay, response };
+        baselines[calibrationKey] = { delay, response, measuredResponse };
         processors[static_cast<std::size_t>(calibrationRoute)].setCalibrationProfile(response);
         if (!saveCalibrations()) error("calibration completed but its baseline could not be persisted");
         auto* o = new juce::DynamicObject();
@@ -679,6 +682,9 @@ public:
         juce::Array<juce::var> curve;
         for (const auto value : response) curve.add(value);
         o->setProperty("responseDb", juce::var(curve));
+        juce::Array<juce::var> rawCurve;
+        for (const auto value : measuredResponse) rawCurve.add(value);
+        o->setProperty("rawResponseDb", juce::var(rawCurve));
         emit(juce::var(o));
         emitState("calibrated");
         calibrationBusy.store(false, std::memory_order_release);

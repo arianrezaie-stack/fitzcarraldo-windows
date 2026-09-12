@@ -16,11 +16,11 @@ type DevicePair = { input: Device; output: Device; interfaceName: string; key: s
 type AudioChannelOption = { key: string; compatibilityKey: string; deviceType: string; deviceName: string; interfaceName: string; direction: 'input' | 'output'; channel: number; channelName: string; label: string };
 type EngineStatus = { state: string; reason?: string };
 type Notch = { frequency: number; depthDb: number; q: number };
-type RouteSnapshot = { route: number; enabled?: boolean; depth?: number; sensitivity?: number; suppression?: number; timing?: number; latch?: number; calibrated?: boolean; delayMs?: number; calibrationResponseDb?: number[]; spectrumDb?: number[]; notches?: Notch[]; activeNotches?: number; maximumAllowedNotches?: number; maximumCutDb?: number };
+type RouteSnapshot = { route: number; enabled?: boolean; depth?: number; sensitivity?: number; suppression?: number; timing?: number; latch?: number; calibrated?: boolean; delayMs?: number; calibrationResponseDb?: number[]; calibrationRawResponseDb?: number[]; spectrumDb?: number[]; notches?: Notch[]; activeNotches?: number; maximumAllowedNotches?: number; maximumCutDb?: number };
 type Telemetry = { running?: boolean; sampleRate?: number; bufferSize?: number; callbackCpu?: number; xruns?: number; callbackDeadlineMisses?: number; driverXruns?: number; callbackExecutionMs?: number; callbackExecutionPeakMs?: number; callbackJitterMs?: number; callbackJitterPeakMs?: number; deviceClockDriftPpm?: number; deviceClockReady?: boolean; deviceClockAgeMs?: number; clockMeasurementSource?: string; inputPeak?: number; outputPeak?: number; protectionEnabled?: boolean; preset?: 'speech' | 'music'; calibrating?: boolean; calibrated?: boolean; calibratedRoutes?: boolean[]; spectrumDb?: number[]; notches?: Notch[]; activeNotches?: number; maximumCutDb?: number; routeTelemetry?: RouteSnapshot[] };
 type AudioState = { phase?: string; running?: boolean; sampleRate?: number; bufferSize?: number };
 type Route = { id: number; enabled: boolean; depth: number; sensitivity: number; timing: number; latch: number; pairKey: string; inputKey: string; outputKey: string; inputChannel: number; outputChannel: number };
-type CalibrationRecord = { delayMs?: number; responseDb: number[] };
+type CalibrationRecord = { delayMs?: number; responseDb: number[]; rawResponseDb?: number[] };
 type RecurringCutEvent = { frequency: number; timestamp: number };
 type RecurringCutAlert = { route: number; frequency: number };
 const recurringCutWindowMs = 4_000;
@@ -101,26 +101,28 @@ function Spectrum({ values = [], notches = [] }: { values?: number[]; notches?: 
   </div>;
 }
 
-function TraceChart({ measured = [], live = [] }: { measured?: number[]; live?: number[] }) {
+function TraceChart({ raw = [], normalized = [], live = [] }: { raw?: number[]; normalized?: number[]; live?: number[] }) {
   const toPoints = (values: number[]) => values.length > 1 ? values.map((value, index) => {
     const x = index / (values.length - 1) * 100;
     const bounded = Math.max(-48, Math.min(18, value));
     const y = 100 - ((bounded + 48) / 66) * 100;
     return `${x},${y}`;
   }).join(' ') : '';
-  const measuredPoints = toPoints(measured);
+  const rawPoints = toPoints(raw);
+  const normalizedPoints = toPoints(normalized);
   const livePoints = toPoints(live);
-  const flatPoints = toPoints(measured.length > 1 ? measured.map(() => 0) : []);
+  const flatPoints = toPoints(normalized.length > 1 ? normalized.map(() => 0) : []);
   return <div className="trace-chart">
     <div className="trace-grid" />
     <div className="trace-y-axis"><span>+18</span><span>0</span><span>-24</span><span>-48 dB</span></div>
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Calibration frequency response comparison">
       {flatPoints && <polyline className="trace-flat" points={flatPoints} />}
-      {measuredPoints && <polyline className="trace-calibration" points={measuredPoints} />}
+      {rawPoints && <polyline className="trace-raw" points={rawPoints} />}
+      {normalizedPoints && <polyline className="trace-normalized" points={normalizedPoints} />}
       {livePoints && <polyline className="trace-live" points={livePoints} />}
     </svg>
     <div className="trace-axis">{spectrumTicks.map((tick, index) => <span key={tick.frequency} className={index === 0 ? 'first' : index === spectrumTicks.length - 1 ? 'last' : ''} style={{ left: `${frequencyPosition(tick.frequency)}%` }}>{tick.label}</span>)}</div>
-    <div className="trace-legend"><span><i className="trace-key flat" /> flat reference · 0 dB</span><span><i className="trace-key calibration" /> calibrated room response</span><span><i className="trace-key live" /> current live spectrum</span></div>
+    <div className="trace-legend"><span><i className="trace-key raw" /> original measured response</span><span><i className="trace-key normalized" /> normalized calibration response</span><span><i className="trace-key flat" /> flat reference · 0 dB</span><span><i className="trace-key live" /> current live spectrum</span></div>
   </div>;
 }
 
@@ -129,8 +131,8 @@ function CalibrationDialog({ route, record, live, onClose }: { route: number; re
   return <div className="note-overlay" role="dialog" aria-modal="true" aria-labelledby="calibration-dialog-title">
     <div className="note-dialog calibration-dialog">
       <div className="dialog-heading"><div><div className="section-kicker"><BarChart3 size={14} /> route {route} measurement</div><h3 id="calibration-dialog-title">Calibration trace comparison</h3></div><button type="button" className="dialog-close" onClick={onClose} aria-label="Close calibration comparison"><X size={16} /></button></div>
-      <p>The copper trace is the measured room and loudspeaker response. Its elevated regions receive more detection priority during live protection. The pale trace is the current route spectrum.</p>
-      <TraceChart measured={record.responseDb} live={live} />
+      <p>The copper trace is the original measured room and loudspeaker response. The white trace is the same curve after its broadband offset is applied. The thin line marks the 0 dB flat reference; the pale dashed trace is the current route spectrum.</p>
+      <TraceChart raw={record.rawResponseDb ?? record.responseDb} normalized={record.responseDb} live={live} />
       <div className="dialog-readout"><span>Measured delay</span><strong>{record.delayMs === undefined ? '—' : `${record.delayMs.toFixed(1)} ms`}</strong></div>
       <button type="button" onClick={onClose}>Close comparison</button>
     </div>
@@ -332,6 +334,7 @@ function Home() {
   const activeCalibration = calibrations[activeRoute + 1] ?? (activeRouteTelemetry?.calibrationResponseDb ? {
     delayMs: activeRouteTelemetry.delayMs,
     responseDb: activeRouteTelemetry.calibrationResponseDb,
+    rawResponseDb: activeRouteTelemetry.calibrationRawResponseDb ?? activeRouteTelemetry.calibrationResponseDb,
   } : undefined);
   const activeRouteSelection = routeSelection(activeRouteState);
   const activeRouteMapped = !!activeRouteSelection.input
@@ -416,8 +419,15 @@ function Home() {
         const responseDb = Array.isArray(payload.responseDb)
           ? payload.responseDb.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
           : [];
+        const rawResponseDb = Array.isArray(payload.rawResponseDb)
+          ? payload.rawResponseDb.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+          : [];
         if (route > 0 && responseDb.length > 1) {
-          setCalibrations((current) => ({ ...current, [route]: { delayMs: Number(payload.delayMs ?? 0), responseDb } }));
+          setCalibrations((current) => ({ ...current, [route]: {
+            delayMs: Number(payload.delayMs ?? 0),
+            responseDb,
+            rawResponseDb: rawResponseDb.length > 1 ? rawResponseDb : responseDb,
+          } }));
           setActiveRoute(route - 1);
         }
          void bridge.command('set_protection', { enabled: true, preset })

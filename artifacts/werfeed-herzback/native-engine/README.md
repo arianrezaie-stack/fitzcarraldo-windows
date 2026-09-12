@@ -117,10 +117,10 @@ with `{"route":0,"depth":0.75}`, while detector sensitivity is set with
 `{"route":0,"sensitivity":0.75}`; both remain in the range 0–1. Higher
 sensitivity lowers the feedback detection threshold and admits quieter candidates.
 The detector threshold spans 0 dBFS at 0% sensitivity to −70 dBFS at 100%.
-Calibration removes the measured broadband gain offset using the average from
-200 Hz through 10 kHz only to calculate one broadband offset. That same offset
-is subtracted from every measured bin from 20 Hz through 20 kHz, preserving the
-relative frequency response around a 0 dB reference.
+Calibration removes the measured broadband gain offset by calculating the
+median amplitude across the complete 20 Hz through 20 kHz measured spectrum.
+One scalar offset places that median around -3 dB, and the same offset is
+applied to every bin so the relative frequency response is preserved.
 Calibration accepts a zero-based route and a safe normalized level no higher
 than 0.08. The Electron desktop bridge adds the bundled
 `calibration-announcement.mp3` path to this command. The native engine plays

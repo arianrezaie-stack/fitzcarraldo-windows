@@ -111,10 +111,10 @@ int main() {
     std::vector<float> response(sweep.size() + 128, 0.0f);
     for (std::size_t i = 0; i < sweep.size(); ++i) response[i + 128] = sweep[i] * 0.5f;
     const auto measured = werfeed::measureResponse(sweep, response, rate, 128);
-    // Flat gain is normalized to the 0 dB calibration reference.
+    // Flat gain is shifted to the -3 dB median calibration reference.
     const auto normalizedMeasured = werfeed::normalizeCalibrationResponse(measured);
     for (const auto db : normalizedMeasured)
-        REQUIRE(std::isfinite(db) && std::abs(db) < 1.5f);
+        REQUIRE(std::isfinite(db) && std::abs(db + 3.0f) < 1.5f);
 
     constexpr std::size_t shapedDelay = 173;
     std::vector<float> shapedResponse(sweep.size() + shapedDelay, 0.0f);
@@ -129,33 +129,19 @@ int main() {
     const auto shapedMeasured = werfeed::measureResponse(
         sweep, shapedResponse, rate, static_cast<int>(shapedDelay));
     const auto normalizedShaped = werfeed::normalizeCalibrationResponse(shapedMeasured);
-    double shapedMean = 0.0;
-    std::size_t shapedMeanCount = 0;
-    for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin) {
-        const auto position = static_cast<double>(bin) /
-            static_cast<double>(werfeed::analyzerBins - 1);
-        const auto frequency = calibrationStartHz *
-            std::pow(calibrationEndHz / calibrationStartHz, position);
-        if (frequency >= 200.0 && frequency <= 10000.0) {
-            shapedMean += shapedRoomResponseDb(frequency);
-            ++shapedMeanCount;
-        }
-    }
-    const auto expectedMean = static_cast<float>(shapedMean /
-        static_cast<double>(shapedMeanCount));
-    double normalizedMean = 0.0;
-    for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin) {
-        const auto position = static_cast<double>(bin) /
-            static_cast<double>(werfeed::analyzerBins - 1);
-        const auto frequency = calibrationStartHz *
-            std::pow(calibrationEndHz / calibrationStartHz, position);
-        if (frequency >= 200.0 && frequency <= 10000.0)
-            normalizedMean += normalizedShaped[bin];
-    }
-    REQUIRE(std::abs(normalizedMean / static_cast<double>(shapedMeanCount)) < 0.05);
-    // The normalization uses one scalar offset. Every frequency, including
-    // the 20 Hz–200 Hz and 10 kHz–20 kHz edges, must move by that same amount.
+    auto sortedShaped = shapedMeasured;
+    std::sort(sortedShaped.begin(), sortedShaped.end());
+    const auto shapedMedian = 0.5f * (sortedShaped[(sortedShaped.size() - 1) / 2] +
+                                      sortedShaped[sortedShaped.size() / 2]);
+    const auto expectedOffset = -3.0f - shapedMedian;
+    auto sortedNormalized = normalizedShaped;
+    std::sort(sortedNormalized.begin(), sortedNormalized.end());
+    const auto normalizedMedian = 0.5f * (sortedNormalized[(sortedNormalized.size() - 1) / 2] +
+                                          sortedNormalized[sortedNormalized.size() / 2]);
+    REQUIRE(std::abs(normalizedMedian + 3.0f) < 0.05f);
+    // The normalization uses one scalar offset across the whole spectrum.
     const auto wholeCurveOffset = normalizedShaped.front() - shapedMeasured.front();
+    REQUIRE(std::abs(wholeCurveOffset - expectedOffset) < 0.001f);
     for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin)
         REQUIRE(std::abs((normalizedShaped[bin] - shapedMeasured[bin]) -
                          wholeCurveOffset) < 0.001f);
@@ -168,7 +154,7 @@ int main() {
             std::pow(calibrationEndHz / calibrationStartHz, position);
         REQUIRE(std::isfinite(shapedMeasured[bin]));
         REQUIRE(std::abs(normalizedShaped[bin] -
-                         static_cast<float>(shapedRoomResponseDb(frequency) - expectedMean)) < 1.0f);
+                         static_cast<float>(shapedRoomResponseDb(frequency) + expectedOffset)) < 1.0f);
     }
     std::array<float, werfeed::analyzerBins> calibrationPeaks {};
     calibrationPeaks.fill(0.0f);
