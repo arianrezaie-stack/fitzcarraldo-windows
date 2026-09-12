@@ -110,15 +110,17 @@ function TraceChart({ measured = [], live = [] }: { measured?: number[]; live?: 
   }).join(' ') : '';
   const measuredPoints = toPoints(measured);
   const livePoints = toPoints(live);
+  const flatPoints = toPoints(measured.length > 1 ? measured.map(() => 0) : []);
   return <div className="trace-chart">
     <div className="trace-grid" />
     <div className="trace-y-axis"><span>+18</span><span>0</span><span>-24</span><span>-48 dB</span></div>
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Calibration frequency response comparison">
+      {flatPoints && <polyline className="trace-flat" points={flatPoints} />}
       {measuredPoints && <polyline className="trace-calibration" points={measuredPoints} />}
       {livePoints && <polyline className="trace-live" points={livePoints} />}
     </svg>
     <div className="trace-axis">{spectrumTicks.map((tick, index) => <span key={tick.frequency} className={index === 0 ? 'first' : index === spectrumTicks.length - 1 ? 'last' : ''} style={{ left: `${frequencyPosition(tick.frequency)}%` }}>{tick.label}</span>)}</div>
-    <div className="trace-legend"><span><i className="trace-key calibration" /> calibrated room response</span><span><i className="trace-key live" /> current live spectrum</span></div>
+    <div className="trace-legend"><span><i className="trace-key flat" /> flat reference · 0 dB</span><span><i className="trace-key calibration" /> calibrated room response</span><span><i className="trace-key live" /> current live spectrum</span></div>
   </div>;
 }
 
@@ -191,9 +193,9 @@ function AudioMappingPanel({
     </div>
     <div className="detail-row"><span>Shared interface basis</span><strong>{sharedDescription}</strong></div>
     <div className="detail-row"><span>Requested buffer</span><select value={buffer} disabled={!nativeReady} onChange={(event) => onBufferChange(event.target.value)}><option value="32">32 samples</option><option value="64">64 samples</option><option value="128">128 samples</option></select></div>
-    <div className="detail-row"><span>Engine state</span><strong>{restartingAudio ? 'restarting selected audio connection…' : audioRunning ? 'running · bypassed until armed' : nativeReady ? 'connected · waiting for mappings' : 'unavailable'}</strong></div>
-    <button type="button" className="restart-audio-button" disabled={!restartAvailable || restartingAudio} onClick={onRestartAudio}><RefreshCw size={14} /> {restartingAudio ? 'Restarting audio engine…' : 'Restart audio engine'}</button>
-    <p className="section-note">The native engine receives the exact device names and channel indices selected here. Standby routes send no audio but remain selectable and mappable. Restart reopens the selected backend and interface without closing the app.</p>
+    <div className="detail-row"><span>Engine state</span><strong>{restartingAudio ? 'restarting Werfeed Herzback…' : audioRunning ? 'running · bypassed until armed' : nativeReady ? 'connected · waiting for mappings' : 'unavailable'}</strong></div>
+    <button type="button" className="restart-audio-button" disabled={!restartAvailable || restartingAudio} onClick={onRestartAudio}><RefreshCw size={14} /> {restartingAudio ? 'Restarting application…' : 'Restart application'}</button>
+    <p className="section-note">The native engine receives the exact device names and channel indices selected here. Standby routes send no audio but remain selectable and mappable. Restart closes and relaunches Werfeed Herzback with the current desktop configuration.</p>
   </div>;
 }
 
@@ -296,8 +298,7 @@ function Home() {
   const outputOptions = useMemo(() => channelOptions.filter((option) => option.direction === 'output'), [channelOptions]);
   const nativeReady = !!bridge && engineStatus.state === 'running';
   const audioRunning = audioState.running ?? telemetry.running ?? false;
-  const restartAvailable = nativeReady && (audioRunning
-    || ['configured', 'stopped', 'device_stopped'].includes(audioState.phase ?? ''));
+  const restartAvailable = nativeReady && !telemetry.calibrating;
   const rate = telemetry.sampleRate ?? audioState.sampleRate;
   const actualBuffer = telemetry.bufferSize ?? audioState.bufferSize;
   const latency = rate && actualBuffer ? (actualBuffer * 2 / rate) * 1000 : undefined;
@@ -366,7 +367,7 @@ function Home() {
     const maximumDepthDb = (14 * depthCore + 10 * depthExtension + 8 * depthExtra)
       * (1 + 0.2 * depthExtra);
     const depthReadout = `−${maximumDepthDb.toFixed(1)} dB max`;
-    const sensitivityThresholdDb = 6 - 46 * Math.max(0, Math.min(1, activeSensitivity));
+    const sensitivityThresholdDb = -70 * Math.max(0, Math.min(1, activeSensitivity));
     const sensitivityThresholdSign = sensitivityThresholdDb >= 0 ? '+' : '−';
     const sensitivityReadout = `${sensitivityThresholdSign}${Math.abs(sensitivityThresholdDb).toFixed(1)} dBFS`;
    const expectedCallbackMs = rate && actualBuffer ? (actualBuffer / rate) * 1000 : undefined;
@@ -648,9 +649,9 @@ function Home() {
   const restartAudio = () => {
     if (!bridge || !restartAvailable || restartingAudio) return;
     setRestartingAudio(true);
-    void bridge.command('restart_audio').catch((error: unknown) => {
+    void bridge.restartApp().catch((error: unknown) => {
       setRestartingAudio(false);
-      showToast(error instanceof Error ? error.message : 'Unable to restart audio engine');
+      showToast(error instanceof Error ? error.message : 'Unable to restart Werfeed Herzback');
     });
   };
    const setDepth = (value: number) => {
@@ -707,6 +708,7 @@ function Home() {
   const shellStyle = { '--watermark-image': `url("${watermarkUrl}")` } as CSSProperties;
   return <div className="app-shell" style={shellStyle}>
     {message && <div className="toast" role="status"><AlertTriangle size={14} /> {message}</div>}
+    {restartingAudio && <div className="app-restart-lock" role="alert" aria-live="assertive" aria-busy="true"><RefreshCw size={20} /><strong>Restarting Werfeed Herzback</strong><span>The interface is locked until the application restarts.</span></div>}
     <header className="app-header">
        <div className="brand-lockup"><div className="brand-mark"><AudioLines size={20} /></div><div><div className="eyebrow">Arian Rezaie's Adaptive Feedback Control</div><h1 className="brand-title">Werfeed Herzback <span className="brand-byline">· by Arian Rezaie</span> <small className="brand-version">v{packageJson.version}</small></h1></div></div>
       <div className="header-meta">

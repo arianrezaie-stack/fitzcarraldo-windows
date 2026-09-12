@@ -128,44 +128,6 @@ public:
         emitState("stopped");
     }
 
-    void restartAudio() {
-        const std::lock_guard<std::mutex> controlGuard(controlMutex);
-        if (!configured.load()) { error("configure an audio device before restarting"); return; }
-        if (calibrationBusy.load()) { error("wait for calibration finalization before restarting audio"); return; }
-
-        const auto wasRunning = running.exchange(false);
-        if (callbackRegistered.exchange(false)) manager.removeAudioCallback(this);
-        cancelCalibration();
-        manager.closeAudioDevice();
-        deviceActive.store(false);
-
-        manager.setCurrentAudioDeviceType(configuredDeviceType, true);
-        if (manager.getCurrentAudioDeviceType() != configuredDeviceType) {
-            configured.store(false);
-            error("selected audio backend is unavailable during restart");
-            return;
-        }
-
-        auto setup = configuredSetup;
-        const auto result = manager.initialise(
-            configuredInputChannels, configuredOutputChannels, nullptr, true, {}, &setup);
-        if (result.isNotEmpty()) {
-            configured.store(false);
-            error(juce::String("audio engine restart failed: ") + result);
-            return;
-        }
-        configuredSetup = setup;
-        prepareProcessorsForCurrentDevice();
-        configured.store(true);
-        if (wasRunning || configured.load()) {
-            callbackRegistered.store(true);
-            manager.addAudioCallback(this);
-            running.store(true);
-            emitState("started");
-        } else {
-            emitState("configured");
-        }
-    }
     bool isRunning() const noexcept { return running.load(); }
 
     void setProtection(const juce::DynamicObject& command) {
@@ -695,10 +657,15 @@ public:
             error("calibration failed: sweep response signal-to-noise ratio is too low");
             emitState("calibration_failed"); return;
         }
-        const auto response = werfeed::measureResponse(
+        const auto measuredResponse = werfeed::measureResponse(
             std::span<const float>(calibrationExcitation).subspan(sweepOffset),
             std::span<const float>(calibrationRecording).subspan(sweepOffset),
             rate, delay);
+        // Calibration gain depends heavily on the physical playback and
+        // microphone levels. Remove only the broadband offset so the response
+        // keeps its frequency-relative shape while its 200 Hz–10 kHz mean is
+        // the 0 dB reference used by the result chart.
+        const auto response = werfeed::normalizeCalibrationResponse(measuredResponse);
         const auto calibrationKey = calibrationRouteKey;
         baselines[calibrationKey] = { delay, response };
         processors[static_cast<std::size_t>(calibrationRoute)].setCalibrationProfile(response);
@@ -1025,7 +992,6 @@ int main() {
         else if (name == "start") engine.start();
         else if (name == "stop") engine.stop();
         else if (name == "set_route_arming") engine.setRouteArming(*object);
-        else if (name == "restart_audio") engine.restartAudio();
         else if (name == "set_protection") engine.setProtection(*object);
         else if (name == "set_manual_notch") engine.setManualNotch(*object);
         else if (name == "clear_manual_notch") engine.clearManualNotch(*object);

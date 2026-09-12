@@ -111,8 +111,10 @@ int main() {
     std::vector<float> response(sweep.size() + 128, 0.0f);
     for (std::size_t i = 0; i < sweep.size(); ++i) response[i + 128] = sweep[i] * 0.5f;
     const auto measured = werfeed::measureResponse(sweep, response, rate, 128);
-    // Flat gain remains the baseline calibration behavior.
-    for (const auto db : measured) REQUIRE(std::isfinite(db) && std::abs(db + 6.0206f) < 1.5f);
+    // Flat gain is normalized to the 0 dB calibration reference.
+    const auto normalizedMeasured = werfeed::normalizeCalibrationResponse(measured);
+    for (const auto db : normalizedMeasured)
+        REQUIRE(std::isfinite(db) && std::abs(db) < 1.5f);
 
     constexpr std::size_t shapedDelay = 173;
     std::vector<float> shapedResponse(sweep.size() + shapedDelay, 0.0f);
@@ -126,16 +128,31 @@ int main() {
     }
     const auto shapedMeasured = werfeed::measureResponse(
         sweep, shapedResponse, rate, static_cast<int>(shapedDelay));
+    const auto normalizedShaped = werfeed::normalizeCalibrationResponse(shapedMeasured);
+    double shapedMean = 0.0;
+    std::size_t shapedMeanCount = 0;
+    for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin) {
+        const auto position = static_cast<double>(bin) /
+            static_cast<double>(werfeed::analyzerBins - 1);
+        const auto frequency = calibrationStartHz *
+            std::pow(calibrationEndHz / calibrationStartHz, position);
+        if (frequency >= 200.0 && frequency <= 10000.0) {
+            shapedMean += shapedRoomResponseDb(frequency);
+            ++shapedMeanCount;
+        }
+    }
+    const auto expectedMean = static_cast<float>(shapedMean /
+        static_cast<double>(shapedMeanCount));
     // The 40 ms local analysis window averages a small portion of the sweep,
-    // so the measured curve must follow the known response within 1.0 dB.
+    // so the normalized curve must follow the relative response within 1.0 dB.
     for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin) {
         const auto position = static_cast<double>(bin) /
             static_cast<double>(werfeed::analyzerBins - 1);
         const auto frequency = calibrationStartHz *
             std::pow(calibrationEndHz / calibrationStartHz, position);
         REQUIRE(std::isfinite(shapedMeasured[bin]));
-        REQUIRE(std::abs(shapedMeasured[bin] -
-                         static_cast<float>(shapedRoomResponseDb(frequency))) < 1.0f);
+        REQUIRE(std::abs(normalizedShaped[bin] -
+                         static_cast<float>(shapedRoomResponseDb(frequency) - expectedMean)) < 1.0f);
     }
     std::array<float, werfeed::analyzerBins> calibrationPeaks {};
     calibrationPeaks.fill(0.0f);
@@ -363,8 +380,8 @@ int main() {
     REQUIRE(werfeed::persistentNotchLimit(8, 1.0f) == 5);
     REQUIRE(werfeed::maximumSuppressionDepth(1.0f) >= -38.5f &&
             werfeed::maximumSuppressionDepth(1.0f) <= -37.8f);
-    REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(0.0f) - 6.0f) < 0.01f);
-    REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(1.0f) - (-40.0f)) < 0.01f);
+    REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(0.0f) - 0.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(1.0f) - (-70.0f)) < 0.01f);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.79f) == 420);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.8f) == 480);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(1.0f) == 520);

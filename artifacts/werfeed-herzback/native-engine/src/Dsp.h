@@ -167,6 +167,30 @@ inline std::array<float, analyzerBins> calibrationBiasFromResponse(
     return peakBias;
 }
 
+inline std::array<float, analyzerBins> normalizeCalibrationResponse(
+    const std::array<float, analyzerBins>& responseDb) noexcept {
+    constexpr float normalizationStartHz = 200.0f;
+    constexpr float normalizationEndHz = 10000.0f;
+    double sum = 0.0;
+    std::size_t count = 0;
+    for (std::size_t bin = 0; bin < analyzerBins; ++bin) {
+        const auto position = static_cast<float>(bin) /
+            static_cast<float>(analyzerBins - 1);
+        const auto frequency = 20.0f * std::pow(1000.0f, position);
+        if (frequency < normalizationStartHz || frequency > normalizationEndHz ||
+            !std::isfinite(responseDb[bin]))
+            continue;
+        sum += responseDb[bin];
+        ++count;
+    }
+    const auto mean = count > 0 ? static_cast<float>(sum /
+        static_cast<double>(count)) : 0.0f;
+    std::array<float, analyzerBins> normalized {};
+    for (std::size_t bin = 0; bin < analyzerBins; ++bin)
+        normalized[bin] = responseDb[bin] - mean;
+    return normalized;
+}
+
 inline std::array<float, analyzerBins> detectionBaseline(
     const std::array<float, analyzerBins>& responseDb) noexcept {
     const auto peakBias = calibrationBiasFromResponse(responseDb);
@@ -243,7 +267,7 @@ inline float maximumSuppressionDepth(float amount) noexcept {
 
 inline float feedbackAmplitudeThresholdDb(float sensitivity) noexcept {
     const auto clamped = std::clamp(sensitivity, 0.0f, 1.0f);
-    return 6.0f - 46.0f * clamped;
+    return -70.0f * clamped;
 }
 
 inline std::size_t persistentNotchLimit(std::size_t capacity, float amount) noexcept {

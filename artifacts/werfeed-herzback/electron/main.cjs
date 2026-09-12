@@ -10,7 +10,6 @@ const ENGINE_COMMANDS = new Set([
   'start',
   'stop',
   'set_route_arming',
-   'restart_audio',
   'set_protection',
   'set_manual_notch',
   'clear_manual_notch',
@@ -29,6 +28,7 @@ const validationOutputPath = process.env.WERFEED_VALIDATION_OUTPUT;
 const validationEngineOutputPath = process.env.WERFEED_VALIDATION_ENGINE_OUTPUT;
 let validationFailed = false;
 let validationFinished = false;
+let restartRequested = false;
 
 function writeValidation(record) {
   if (!validationOutputPath) return;
@@ -288,6 +288,21 @@ function stopEngine() {
   }, 3000);
   forceTimer.unref();
 }
+
+ipcMain.handle('werfeed-app:restart', () => {
+  if (restartRequested) return { accepted: true };
+  restartRequested = true;
+  setEngineStatus('restarting', 'Werfeed Herzback is restarting.');
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('werfeed-app:restarting');
+  }
+  stopEngine();
+  setTimeout(() => {
+    app.relaunch();
+    app.exit(0);
+  }, 150);
+  return { accepted: true };
+});
 
 function createWindow() {
   const window = new BrowserWindow({

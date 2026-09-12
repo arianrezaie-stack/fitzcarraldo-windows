@@ -6,7 +6,6 @@ const COMMANDS = new Set([
   'start',
   'stop',
   'set_route_arming',
-   'restart_audio',
   'set_protection',
   'set_manual_notch',
   'clear_manual_notch',
@@ -47,6 +46,7 @@ contextBridge.exposeInMainWorld('werfeedDesktop', {
       validateCommand(command, payload);
       return ipcRenderer.invoke('werfeed-engine:command', command, payload);
     },
+    restartApp: () => ipcRenderer.invoke('werfeed-app:restart'),
     onEvent: (listener) => subscribe('werfeed-engine:event', listener),
     onStatus: (listener) => subscribe('werfeed-engine:status', listener),
     validation: Object.freeze({
