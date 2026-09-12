@@ -143,6 +143,22 @@ int main() {
     }
     const auto expectedMean = static_cast<float>(shapedMean /
         static_cast<double>(shapedMeanCount));
+    double normalizedMean = 0.0;
+    for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin) {
+        const auto position = static_cast<double>(bin) /
+            static_cast<double>(werfeed::analyzerBins - 1);
+        const auto frequency = calibrationStartHz *
+            std::pow(calibrationEndHz / calibrationStartHz, position);
+        if (frequency >= 200.0 && frequency <= 10000.0)
+            normalizedMean += normalizedShaped[bin];
+    }
+    REQUIRE(std::abs(normalizedMean / static_cast<double>(shapedMeanCount)) < 0.05);
+    // The normalization uses one scalar offset. Every frequency, including
+    // the 20 Hz–200 Hz and 10 kHz–20 kHz edges, must move by that same amount.
+    const auto wholeCurveOffset = normalizedShaped.front() - shapedMeasured.front();
+    for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin)
+        REQUIRE(std::abs((normalizedShaped[bin] - shapedMeasured[bin]) -
+                         wholeCurveOffset) < 0.001f);
     // The 40 ms local analysis window averages a small portion of the sweep,
     // so the normalized curve must follow the relative response within 1.0 dB.
     for (std::size_t bin = 0; bin < werfeed::analyzerBins; ++bin) {
