@@ -228,6 +228,7 @@ int main() {
     confirmedFeedback->prepare(rate);
     confirmedFeedback->setEnabled(true);
     confirmedFeedback->setSuppressionAmount(1.0f);
+    confirmedFeedback->setSensitivityAmount(1.0f);
     confirmedFeedback->setBaseline(baseline);
     processConfirmedTone(*confirmedFeedback, 1000.0f, 0.3f, 48000);
     const auto snapshot = confirmedFeedback->snapshot();
@@ -264,6 +265,7 @@ int main() {
     // gate while still passing the tonal and persistence checks.
     auto quietFeedback = std::make_unique<werfeed::FeedbackProcessor>();
     quietFeedback->prepare(rate); quietFeedback->setEnabled(true);
+    quietFeedback->setSensitivityAmount(1.0f);
     int firstEngagedSample = -1;
     for (int i = 0; i < 144000; ++i) {
         const auto level = i < 4096 ? 0.03f : 0.03f *
@@ -312,14 +314,16 @@ int main() {
     auto thresholdAtSeventy = std::make_unique<werfeed::FeedbackProcessor>();
     thresholdAtSeventy->prepare(rate); thresholdAtSeventy->clearBaseline();
     thresholdAtSeventy->setEnabled(true); thresholdAtSeventy->setSuppressionAmount(0.7f);
+    thresholdAtSeventy->setSensitivityAmount(0.7f);
     auto thresholdAtHundred = std::make_unique<werfeed::FeedbackProcessor>();
     thresholdAtHundred->prepare(rate); thresholdAtHundred->clearBaseline();
     thresholdAtHundred->setEnabled(true); thresholdAtHundred->setSuppressionAmount(1.0f);
-    for (int i = 0; i < 96000; ++i) {
-        const auto borderlineTone = 0.0025f * std::sin(
+    thresholdAtHundred->setSensitivityAmount(1.0f);
+    for (int i = 0; i < 16000; ++i) {
+        const auto borderlineTone = 0.02f * std::sin(
             2.0f * werfeed::pi * 1000.0f * i / 48000.0f);
         processSample(*thresholdAtSeventy, borderlineTone);
-        const auto confirmedLevel = i < 4096 ? 0.0025f : 0.0025f *
+        const auto confirmedLevel = i < 4096 ? 0.02f : 0.02f *
             std::pow(10.0f, werfeed::maximumSuppressionDepth(
                 thresholdAtHundred->getSuppressionAmount()) * 0.5f / 20.0f);
         processSample(*thresholdAtHundred, confirmedLevel * std::sin(
@@ -336,6 +340,7 @@ int main() {
     auto highFrequency = std::make_unique<werfeed::FeedbackProcessor>();
     highFrequency->prepare(rate); highFrequency->clearBaseline();
     highFrequency->setEnabled(true); highFrequency->setSuppressionAmount(0.5f);
+    highFrequency->setSensitivityAmount(1.0f);
     processConfirmedTone(*lowFrequency, 1000.0f, 0.0025f, 96000);
     processConfirmedTone(*highFrequency, 4000.0f, 0.02f, 96000);
     REQUIRE(lowFrequency->snapshot().activeNotches == 0);
