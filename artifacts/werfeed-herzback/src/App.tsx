@@ -195,9 +195,9 @@ function AudioMappingPanel({
     </div>
     <div className="detail-row"><span>Shared interface basis</span><strong>{sharedDescription}</strong></div>
     <div className="detail-row"><span>Requested buffer</span><select value={buffer} disabled={!nativeReady} onChange={(event) => onBufferChange(event.target.value)}><option value="32">32 samples</option><option value="64">64 samples</option><option value="128">128 samples</option></select></div>
-    <div className="detail-row"><span>Engine state</span><strong>{restartingAudio ? 'restarting Werfeed Herzback…' : audioRunning ? 'running · bypassed until armed' : nativeReady ? 'connected · waiting for mappings' : 'unavailable'}</strong></div>
-    <button type="button" className="restart-audio-button" disabled={!restartAvailable || restartingAudio} onClick={onRestartAudio}><RefreshCw size={14} /> {restartingAudio ? 'Restarting application…' : 'Restart application'}</button>
-    <p className="section-note">The native engine receives the exact device names and channel indices selected here. Standby routes send no audio but remain selectable and mappable. Restart closes and relaunches Werfeed Herzback with the current desktop configuration.</p>
+    <div className="detail-row"><span>Engine state</span><strong>{restartingAudio ? 'restarting engine…' : audioRunning ? 'running · bypassed until armed' : nativeReady ? 'connected · waiting for mappings' : 'unavailable'}</strong></div>
+    <button type="button" className="restart-audio-button" disabled={!restartAvailable || restartingAudio} onClick={onRestartAudio}><RefreshCw size={14} /> {restartingAudio ? 'Restarting engine…' : 'Restart engine'}</button>
+    <p className="section-note">The native engine receives the exact device names and channel indices selected here. Standby routes send no audio but remain selectable and mappable. The engine restarts while this interface stays visible and locked.</p>
   </div>;
 }
 
@@ -718,7 +718,7 @@ function Home() {
   const shellStyle = { '--watermark-image': `url("${watermarkUrl}")` } as CSSProperties;
   return <div className="app-shell" style={shellStyle}>
     {message && <div className="toast" role="status"><AlertTriangle size={14} /> {message}</div>}
-    {restartingAudio && <div className="app-restart-lock" role="alert" aria-live="assertive" aria-busy="true"><RefreshCw size={20} /><strong>Restarting Werfeed Herzback</strong><span>The interface is locked until the application restarts.</span></div>}
+    {restartingAudio && <div className="app-restart-lock" role="alert" aria-live="assertive" aria-busy="true"><RefreshCw size={20} /><strong>Restarting engine</strong><span>The interface is locked until the engine is ready.</span></div>}
     <header className="app-header">
        <div className="brand-lockup"><div className="brand-mark" aria-label="Werfeed Herzback logo"><svg className="brand-symbol" viewBox="0 0 32 32" role="img" aria-hidden="true"><path className="brand-triangle" d="M16 3.5 29 27.5H3Z" /><path className="brand-eye" d="M8.5 15.5s2.8-4 7.5-4 7.5 4 7.5 4-2.8 4-7.5 4-7.5-4-7.5-4Z" /><circle className="brand-pupil" cx="16" cy="15.5" r="2.15" /></svg></div><div><div className="eyebrow">Arian Rezaie's Adaptive Feedback Control</div><h1 className="brand-title">Werfeed Herzback <span className="brand-byline">· by Arian Rezaie</span> <small className="brand-version">v{packageJson.version}</small></h1></div></div>
       <div className="header-meta">
