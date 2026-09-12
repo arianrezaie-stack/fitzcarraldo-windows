@@ -123,6 +123,10 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
   background: linear-gradient(145deg, #523322, #2a1a14);
   box-shadow: inset 0 0 0 1px rgba(240, 198, 146, .08), 0 5px 18px rgba(0,0,0,.14);
 }
+.brand-symbol { width: 25px; height: 25px; overflow: visible; }
+.brand-triangle { fill: rgba(210, 141, 87, .12); stroke: #e0ad78; stroke-width: 1.35; stroke-linejoin: round; }
+.brand-eye { fill: #2a1a14; stroke: #f0d0a2; stroke-width: 1.15; stroke-linejoin: round; }
+.brand-pupil { fill: #d28d57; }
 .eyebrow { color: #ae8e73; font-size: 10px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; }
 .brand-title { margin: 4px 0 0; color: #f0e0c8; font-family: var(--app-font-serif); font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
 .brand-title .brand-byline { color: #b79679; font-family: var(--app-font-sans); font-size: 12px; font-weight: 400; }
@@ -355,16 +359,17 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .trace-chart { position: relative; height: 280px; overflow: hidden; margin-top: 15px; border: 1px solid #65483a; border-radius: 9px; background: #211611; }
 .trace-grid { position: absolute; inset: 15px 38px 34px 38px; opacity: .58; background-image: linear-gradient(rgba(126,85,59,.22) 1px, transparent 1px), linear-gradient(90deg, rgba(126,85,59,.16) 1px, transparent 1px); background-size: 100% 25%, 10% 100%; }
 .trace-chart svg { position: absolute; inset: 15px 38px 34px 38px; width: calc(100% - 76px); height: calc(100% - 49px); }
-.trace-calibration, .trace-live, .trace-flat { fill: none; stroke-width: 1.7; vector-effect: non-scaling-stroke; }
-.trace-flat { stroke: #8f725e; stroke-dasharray: 2 3; opacity: .8; }
-.trace-calibration { stroke: #d28d57; }
+.trace-raw, .trace-normalized, .trace-live, .trace-flat { fill: none; vector-effect: non-scaling-stroke; }
+.trace-raw { stroke: #c27648; stroke-width: 1.4; opacity: .38; }
+.trace-normalized { stroke: #f1eadc; stroke-width: 2.1; }
+.trace-flat { stroke: #d6c4ac; stroke-width: 1; opacity: .32; }
 .trace-live { stroke: #e8d6b7; stroke-dasharray: 4 3; }
 .trace-y-axis { position: absolute; inset: 15px auto 34px 8px; display: flex; flex-direction: column; justify-content: space-between; color: #9b7c63; font: 8px var(--app-font-mono); }
 .trace-axis { position: absolute; right: 38px; bottom: 9px; left: 38px; height: 10px; color: #9b7c63; font: 8px var(--app-font-mono); }
 .trace-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .trace-axis span.first { transform: none; }.trace-axis span.last { transform: translateX(-100%); }
 .trace-legend { position: absolute; bottom: 33px; left: 44px; display: flex; flex-wrap: wrap; gap: 13px; color: #c3a276; font-size: 8px; }
-.trace-legend span { display: flex; align-items: center; gap: 6px; }.trace-key { width: 18px; height: 1px; background: #d28d57; }.trace-key.flat { border-top: 1px dashed #8f725e; background: transparent; }.trace-key.live { border-top: 1px dashed #e8d6b7; background: transparent; }
+.trace-legend span { display: flex; align-items: center; gap: 6px; }.trace-key { width: 18px; height: 1px; background: #d28d57; }.trace-key.raw { background: #c27648; opacity: .55; }.trace-key.normalized { height: 2px; background: #f1eadc; }.trace-key.flat { height: 1px; background: #d6c4ac; opacity: .42; }.trace-key.live { border-top: 1px dashed #e8d6b7; background: transparent; }
 .dialog-readout { display: flex; justify-content: space-between; margin-top: 12px; border-top: 1px solid #80563e; padding-top: 10px; color: #b29579; font-size: 10px; }.dialog-readout strong { color: #eed5b0; font: 11px var(--app-font-mono); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1200px) { .metrics { grid-template-columns: repeat(3, 1fr); } }
