@@ -1,4 +1,67 @@
-d::min({1.0, t / 0.02, (duration - t) / 0.02});
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <memory>
+#include <span>
+#include <utility>
+#include <vector>
+
+namespace werfeed {
+
+constexpr float pi = 3.14159265358979323846f;
+constexpr std::size_t analyzerBins = 256;
+constexpr std::size_t maxNotches = 48;
+constexpr std::size_t defaultNotchesPerRoute = 8;
+
+constexpr std::size_t sharedNotchCapacity(std::size_t totalSlots,
+                                          std::size_t activeRoutes,
+                                          std::size_t activeOrdinal) noexcept {
+    if (activeRoutes == 0 || activeOrdinal >= activeRoutes) return 0;
+    const auto boundedSlots = std::min(maxNotches, totalSlots);
+    const auto base = boundedSlots / activeRoutes;
+    const auto remainder = boundedSlots % activeRoutes;
+    return base + (activeOrdinal < remainder ? 1 : 0);
+}
+
+enum class ProtectionPreset { speech, music };
+
+struct NotchSnapshot {
+    float frequency = 0.0f;
+    float depthDb = 0.0f;
+    float q = 0.0f;
+    bool active = false;
+};
+
+struct ProtectionSnapshot {
+    std::array<float, analyzerBins> spectrumDb {};
+    std::array<NotchSnapshot, maxNotches> notches {};
+    int activeNotches = 0;
+    float maximumCutDb = 0.0f;
+    float depthAmount = 0.75f;
+    float sensitivityAmount = 0.75f;
+    // Compatibility alias for older telemetry consumers.
+    float suppressionAmount = 0.75f;
+    float timingAmount = 0.5f;
+    float latchAmount = 0.5f;
+};
+
+inline std::vector<float> makeLogSweep(double sampleRate, double seconds,
+                                       float startHz = 20.0f, float endHz = 20000.0f,
+                                       float amplitude = 0.08f) {
+    const auto count = static_cast<std::size_t>(std::max(1.0, sampleRate * seconds));
+    std::vector<float> result(count);
+    const auto ratio = static_cast<double>(endHz / startHz);
+    const auto duration = static_cast<double>(count) / sampleRate;
+    const auto scale = 2.0 * static_cast<double>(pi) * startHz * duration / std::log(ratio);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto t = static_cast<double>(i) / sampleRate;
+        const auto phase = scale * (std::pow(ratio, t / duration) - 1.0);
+        const auto fade = std::min({1.0, t / 0.02, (duration - t) / 0.02});
         result[i] = amplitude * static_cast<float>(std::max(0.0, fade) * std::sin(phase));
     }
     return result;
