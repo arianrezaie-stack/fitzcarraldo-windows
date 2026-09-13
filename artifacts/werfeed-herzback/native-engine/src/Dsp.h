@@ -291,15 +291,16 @@ inline float frequencyThresholdAdjustmentDb(float frequency) noexcept {
     // neutral through the mid band, and more responsive to narrower
     // high-frequency feedback modes.
     constexpr float lowAdjustmentDb = 10.0f;
-    constexpr float highAdjustmentDb = -10.0f;
+    constexpr float highAdjustmentDb = -18.0f;
     constexpr float lowStartHz = 20.0f;
-    constexpr float lowEndHz = 350.0f;
+    constexpr float lowShelfEndHz = 150.0f;
+    constexpr float lowEndHz = 500.0f;
     constexpr float highStartHz = 1500.0f;
-    constexpr float highEndHz = 4000.0f;
-    if (frequency <= lowStartHz) return lowAdjustmentDb;
+    constexpr float highEndHz = 8000.0f;
+    if (frequency <= lowShelfEndHz) return lowAdjustmentDb;
     if (frequency < lowEndHz) {
-        const auto position = std::log(frequency / lowStartHz) /
-            std::log(lowEndHz / lowStartHz);
+        const auto position = std::log(frequency / lowShelfEndHz) /
+            std::log(lowEndHz / lowShelfEndHz);
         return lowAdjustmentDb * (1.0f - static_cast<float>(position));
     }
     if (frequency <= highStartHz) return 0.0f;

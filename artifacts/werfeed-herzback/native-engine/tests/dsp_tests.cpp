@@ -395,12 +395,15 @@ int main() {
     REQUIRE(werfeed::detectorSensitivityAmount(0.6f, true, 8.0f) >
             werfeed::detectorSensitivityAmount(0.6f, true, 1.5f));
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20.0f) - 10.0f) < 0.01f);
-    REQUIRE(werfeed::frequencyThresholdAdjustmentDb(100.0f) >
-            werfeed::frequencyThresholdAdjustmentDb(350.0f));
-    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(350.0f)) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(150.0f) - 10.0f) < 0.01f);
+    REQUIRE(werfeed::frequencyThresholdAdjustmentDb(200.0f) >
+            werfeed::frequencyThresholdAdjustmentDb(500.0f));
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(500.0f)) < 0.01f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(1500.0f)) < 0.01f);
-    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(4000.0f) + 10.0f) < 0.01f);
-    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 10.0f) < 0.01f);
+    REQUIRE(werfeed::frequencyThresholdAdjustmentDb(4000.0f) <
+            werfeed::frequencyThresholdAdjustmentDb(1500.0f));
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(8000.0f) + 18.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 18.0f) < 0.01f);
     const auto ordinaryLowGate = werfeed::detectorEngageThresholdDb(
         0.1f, werfeed::ProtectionPreset::speech, false, 0.0f, 100.0f);
     const auto hotspotLowGate = werfeed::detectorEngageThresholdDb(
