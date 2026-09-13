@@ -260,11 +260,29 @@ inline float feedbackAmplitudeThresholdDb(float sensitivity) noexcept {
     return -70.0f * clamped;
 }
 
+inline float calibrationAmplitudeExcessDb(float measuredPeakBias) noexcept {
+    // calibrationBiasFromResponse stores the post-deadband, 1.25x-scaled
+    // excess above the whole-spectrum median. Recover the measured excess so
+    // hotspot sensitivity can track the actual calibration amplitude delta.
+    return std::max(0.0f, std::max(0.0f, measuredPeakBias) / 1.25f + 2.0f);
+}
+
+inline float detectorHotspotSensitivityLift(float measuredPeakBias) noexcept {
+    // A detected hotspot starts at the previous +0.2 lift (about a 3.2 dB
+    // measured excess). Stronger calibration peaks receive proportionally
+    // more sensitivity, capped at +0.5 so the detector remains controllable.
+    constexpr float sensitivityLiftPerDb = 1.0f / 16.0f;
+    return std::clamp(
+        calibrationAmplitudeExcessDb(measuredPeakBias) * sensitivityLiftPerDb,
+        0.2f, 0.5f);
+}
+
 inline float detectorSensitivityAmount(float sensitivity,
-                                       bool calibrationHotspot) noexcept {
+                                       bool calibrationHotspot,
+                                       float measuredPeakBias = 0.0f) noexcept {
     const auto clamped = std::clamp(sensitivity, 0.0f, 1.0f);
     return calibrationHotspot
-        ? std::min(1.0f, clamped + 0.2f)
+        ? std::min(1.0f, clamped + detectorHotspotSensitivityLift(measuredPeakBias))
         : clamped;
 }
 
@@ -299,7 +317,7 @@ inline float detectorEngageThresholdDb(float sensitivity,
                                        float measuredPeakBias,
                                        float frequency) noexcept {
     const auto candidateSensitivity =
-        detectorSensitivityAmount(sensitivity, calibrationHotspot);
+        detectorSensitivityAmount(sensitivity, calibrationHotspot, measuredPeakBias);
     const auto candidateLegacyAmount = legacySuppressionAmount(candidateSensitivity);
     const auto candidateExtraSensitivity =
         std::clamp((candidateSensitivity - 0.8f) / 0.2f, 0.0f, 1.0f);
@@ -322,9 +340,10 @@ inline float detectorEngageThresholdDb(float sensitivity,
 
 inline float detectorAmplitudeThresholdDb(float sensitivity,
                                           bool calibrationHotspot,
-                                          float frequency) noexcept {
+                                          float frequency,
+                                          float measuredPeakBias = 0.0f) noexcept {
     return feedbackAmplitudeThresholdDb(
-        detectorSensitivityAmount(sensitivity, calibrationHotspot)) +
+        detectorSensitivityAmount(sensitivity, calibrationHotspot, measuredPeakBias)) +
         frequencyThresholdAdjustmentDb(frequency);
 }
 
@@ -833,16 +852,16 @@ private:
                 calibrationPeakBias[baselineBin].load(std::memory_order_relaxed);
             const auto calibrationHotspot = measuredPeakBias >= 1.5f;
             // A calibrated hotspot is known to be unsafe, so give it a
-            // sensitivity lift above the route slider before applying the
-            // ordinary baseline-relative detector gates.
+            // sensitivity lift based on its measured calibration excess above
+            // the spectrum baseline before applying the ordinary gates.
             const auto candidateSensitivity =
-                detectorSensitivityAmount(amount, calibrationHotspot);
+                detectorSensitivityAmount(amount, calibrationHotspot, measuredPeakBias);
             const auto candidateExtraSensitivity =
                 std::clamp((candidateSensitivity - 0.8f) / 0.2f, 0.0f, 1.0f);
             const auto calibratedEngageThreshold = detectorEngageThresholdDb(
                 amount, selectedPreset, calibrationHotspot, measuredPeakBias, frequency);
             const auto amplitudeThresholdDb = detectorAmplitudeThresholdDb(
-                amount, calibrationHotspot, frequency);
+                amount, calibrationHotspot, frequency, measuredPeakBias);
             // Broad speech fundamentals and harmonics are less likely to pass
             // this wider neighborhood comparison than a narrow room howl.
             const auto tonal = level - neighborhoodLevel;

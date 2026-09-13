@@ -385,7 +385,15 @@ int main() {
     REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(0.0f) - 0.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(1.0f) - (-70.0f)) < 0.01f);
     REQUIRE(std::abs(werfeed::detectorSensitivityAmount(0.6f, false) - 0.6f) < 0.01f);
-    REQUIRE(std::abs(werfeed::detectorSensitivityAmount(0.6f, true) - 0.8f) < 0.01f);
+    REQUIRE(std::abs(werfeed::calibrationAmplitudeExcessDb(1.5f) - 3.2f) < 0.01f);
+    REQUIRE(std::abs(werfeed::calibrationAmplitudeExcessDb(8.0f) - 8.4f) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorHotspotSensitivityLift(1.5f) - 0.2f) < 0.01f);
+    REQUIRE(werfeed::detectorHotspotSensitivityLift(8.0f) >
+            werfeed::detectorHotspotSensitivityLift(1.5f));
+    REQUIRE(std::abs(werfeed::detectorHotspotSensitivityLift(16.0f) - 0.5f) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorSensitivityAmount(0.6f, true, 1.5f) - 0.8f) < 0.01f);
+    REQUIRE(werfeed::detectorSensitivityAmount(0.6f, true, 8.0f) >
+            werfeed::detectorSensitivityAmount(0.6f, true, 1.5f));
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20.0f) - 5.0f) < 0.01f);
     REQUIRE(werfeed::frequencyThresholdAdjustmentDb(100.0f) >
             werfeed::frequencyThresholdAdjustmentDb(350.0f));
@@ -403,6 +411,8 @@ int main() {
     REQUIRE(hotspotHighGate < hotspotLowGate);
     REQUIRE(werfeed::detectorAmplitudeThresholdDb(0.1f, true, 4000.0f) <
             werfeed::detectorAmplitudeThresholdDb(0.1f, true, 100.0f));
+    REQUIRE(werfeed::detectorAmplitudeThresholdDb(0.1f, true, 1000.0f, 8.0f) <
+            werfeed::detectorAmplitudeThresholdDb(0.1f, true, 1000.0f, 1.5f));
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.79f) == 420);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.8f) == 480);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(1.0f) == 520);
