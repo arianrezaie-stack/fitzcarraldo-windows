@@ -21,11 +21,21 @@ type Telemetry = { running?: boolean; sampleRate?: number; bufferSize?: number; 
 type AudioState = { phase?: string; running?: boolean; sampleRate?: number; bufferSize?: number };
 type Route = { id: number; enabled: boolean; depth: number; sensitivity: number; timing: number; latch: number; pairKey: string; inputKey: string; outputKey: string; inputChannel: number; outputChannel: number };
 type CalibrationRecord = { delayMs?: number; responseDb: number[]; rawResponseDb?: number[] };
-type RecurringCutEvent = { frequency: number; timestamp: number };
-type RecurringCutAlert = { route: number; frequency: number };
-const recurringCutWindowMs = 4_000;
+type RecurringCutEvent = { frequency: number; timestamp: number; qualified: boolean };
+type RecurringCutAlert = { route: number; frequencies: number[] };
+const recurringCutWindowMs = 2_500;
+const recurringCutDisplayMs = 5_000;
 const recurringCutThreshold = 3;
+const maximumSuggestedCuts = 3;
 const sameCutFrequency = (left: number, right: number) => Math.abs(Math.log2(left / right)) < 0.08;
+const maximumDepthDbForAmount = (amount: number) => {
+  const clamped = Math.max(0, Math.min(1, amount));
+  const legacyDepth = clamped <= 0.7 ? clamped : Math.min(1, 0.7 + (clamped - 0.7) * 3);
+  const depthCore = Math.min(1, legacyDepth / 0.7);
+  const depthExtension = Math.max(0, Math.min(1, (legacyDepth - 0.7) / 0.3));
+  const depthExtra = Math.max(0, Math.min(1, (clamped - 0.8) / 0.2));
+  return (14 * depthCore + 10 * depthExtension + 8 * depthExtra) * (1 + 0.2 * depthExtra);
+};
 const calibrationPeakProminenceDb = 3;
 const calibrationHasPeakAtFrequency = (responseDb: number[] | undefined, frequency: number) => {
   if (!responseDb || responseDb.length < 5 || !Number.isFinite(frequency) || frequency <= 0) return false;
@@ -227,26 +237,19 @@ function Home() {
   const recurringCutHistory = useRef<Record<number, RecurringCutEvent[]>>({});
   const previousRouteNotches = useRef<Record<number, number[]>>({});
   const recurringCutAlertRef = useRef<RecurringCutAlert | null>(null);
+  const recurringCutAlertTimer = useRef<number | null>(null);
   const [recurringCutAlert, setRecurringCutAlert] = useState<RecurringCutAlert | null>(null);
+  const sensitivityCommandTimer = useRef<number | null>(null);
+  const pendingSensitivityCommand = useRef<{ route: number; value: number } | null>(null);
   const bypassInitialized = useRef(false);
   const clearRecurringCutSession = () => {
     recurringCutHistory.current = {};
     previousRouteNotches.current = {};
     recurringCutAlertRef.current = null;
-    setRecurringCutAlert(null);
-  };
-  const dismissRecurringCutAlert = () => {
-    const alert = recurringCutAlertRef.current;
-    if (!alert) return;
-    if (bridge && nativeReady) {
-      void bridge.command('clear_manual_notch', {
-        route: alert.route - 1,
-        frequency: alert.frequency,
-      }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to remove the permanent cut'));
+    if (recurringCutAlertTimer.current !== null) {
+      window.clearTimeout(recurringCutAlertTimer.current);
+      recurringCutAlertTimer.current = null;
     }
-    recurringCutHistory.current[alert.route] = (recurringCutHistory.current[alert.route] ?? [])
-      .filter((event) => !sameCutFrequency(event.frequency, alert.frequency));
-    recurringCutAlertRef.current = null;
     setRecurringCutAlert(null);
   };
 
@@ -352,8 +355,8 @@ function Home() {
    const observedCutDepthDb = activeRouteTelemetry?.maximumCutDb;
    const estimatedCutDepthDb = observedCutDepthDb !== undefined && observedCutDepthDb < -0.5
      ? Math.abs(observedCutDepthDb) : 32;
-   const releaseStepDbPerFrame = Math.max(0.001,
-     (0.12 - 0.07 * activeDepth)
+    const releaseStepDbPerFrame = Math.max(0.001,
+      (0.15 - 0.08 * activeDepth)
      * (1 - 0.7 * activeTiming)
      * (1 - 0.45 * activeLatch));
    const timingReleaseMs = Math.round(
@@ -362,17 +365,11 @@ function Home() {
     const latchHoldBands = Math.min(activeNotchCapacity,
       Math.floor(activeNotchCapacity * (2 / 3) * Math.max(0, Math.min(1, activeLatch))));
     const latchReadout = `${latchHoldBands} ${latchHoldBands === 1 ? 'band' : 'bands'} max`;
-    const legacyDepth = activeDepth <= 0.7
-      ? activeDepth : Math.min(1, 0.7 + (activeDepth - 0.7) * 3);
-    const depthCore = Math.min(1, legacyDepth / 0.7);
-    const depthExtension = Math.max(0, Math.min(1, (legacyDepth - 0.7) / 0.3));
-    const depthExtra = Math.max(0, Math.min(1, (activeDepth - 0.8) / 0.2));
-    const maximumDepthDb = (14 * depthCore + 10 * depthExtension + 8 * depthExtra)
-      * (1 + 0.2 * depthExtra);
+    const maximumDepthDb = maximumDepthDbForAmount(activeDepth);
     const depthReadout = `−${maximumDepthDb.toFixed(1)} dB max`;
     const sensitivityThresholdDb = -70 * Math.max(0, Math.min(1, activeSensitivity));
     const sensitivityThresholdSign = sensitivityThresholdDb >= 0 ? '+' : '−';
-    const sensitivityReadout = `${sensitivityThresholdSign}${Math.abs(sensitivityThresholdDb).toFixed(1)} dBFS`;
+    const sensitivityReadout = `${sensitivityThresholdSign}${Math.abs(sensitivityThresholdDb).toFixed(1)} dBFS base`;
    const expectedCallbackMs = rate && actualBuffer ? (actualBuffer / rate) * 1000 : undefined;
    const callbackJitterScore = audioRunning && expectedCallbackMs && typeof telemetry.callbackJitterMs === 'number'
      ? Math.max(0, Math.min(1, 1 - telemetry.callbackJitterMs / expectedCallbackMs))
@@ -456,6 +453,11 @@ function Home() {
     void bridge.getStatus().then(setEngineStatus).catch((error: unknown) => setEngineStatus({ state: 'unavailable', reason: error instanceof Error ? error.message : 'Unable to read native engine status' }));
     return () => { removeStatus(); removeEvent(); };
    }, [bridge, pendingStart, activeRoute]);
+
+   useEffect(() => () => {
+     if (sensitivityCommandTimer.current !== null)
+       window.clearTimeout(sensitivityCommandTimer.current);
+   }, []);
 
   useEffect(() => {
     if (!bridge || engineStatus.state !== 'running') return;
@@ -611,31 +613,59 @@ function Home() {
     }
     const now = Date.now();
     telemetry.routeTelemetry?.forEach((snapshot) => {
-      const currentFrequencies = (snapshot.notches ?? [])
-        .map((notch) => notch.frequency)
-        .filter((frequency) => Number.isFinite(frequency) && frequency > 0);
+       const currentNotches = (snapshot.notches ?? [])
+         .filter((notch) => Number.isFinite(notch.frequency) && notch.frequency > 0);
+       const currentFrequencies = currentNotches.map((notch) => notch.frequency);
       const previousFrequencies = previousRouteNotches.current[snapshot.route] ?? [];
-      const freshEngagements = currentFrequencies.filter((frequency) =>
-        !previousFrequencies.some((previous) => sameCutFrequency(previous, frequency)));
+       const freshEngagements = currentNotches.filter((notch) =>
+         !previousFrequencies.some((previous) => sameCutFrequency(previous, notch.frequency)));
       const recentEvents = (recurringCutHistory.current[snapshot.route] ?? [])
         .filter((event) => now - event.timestamp <= recurringCutWindowMs);
-      freshEngagements.forEach((frequency) => recentEvents.push({ frequency, timestamp: now }));
-      recurringCutHistory.current[snapshot.route] = recentEvents;
+       freshEngagements.forEach((notch) => recentEvents.push({
+         frequency: notch.frequency,
+         timestamp: now,
+         qualified: false,
+       }));
+       const configuredMaximumDepthDb = maximumDepthDbForAmount(
+         snapshot.depth ?? snapshot.suppression ?? 0.75);
+       const isMaximumDepthCut = (notch: Notch) =>
+         configuredMaximumDepthDb > 1
+         && Math.abs(notch.depthDb) >= configuredMaximumDepthDb * 0.92;
+       const qualifiedEvents = recentEvents.map((event) => {
+         const matchingNotch = currentNotches.find((notch) =>
+           sameCutFrequency(notch.frequency, event.frequency));
+         return matchingNotch && isMaximumDepthCut(matchingNotch)
+           ? { ...event, qualified: true }
+           : event;
+       });
+       recurringCutHistory.current[snapshot.route] = qualifiedEvents;
       previousRouteNotches.current[snapshot.route] = currentFrequencies;
 
-      if (recurringCutAlertRef.current) return;
-      const firstQualifyingEvent = recentEvents.find((event) =>
-        recentEvents.filter((candidate) => sameCutFrequency(candidate.frequency, event.frequency)).length >= recurringCutThreshold
-        && snapshot.calibrated === true
-        && calibrationHasPeakAtFrequency(snapshot.calibrationResponseDb, event.frequency));
-      if (firstQualifyingEvent) {
-        const alert = { route: snapshot.route, frequency: firstQualifyingEvent.frequency };
+       if (recurringCutAlertRef.current || snapshot.calibrated !== true) return;
+       const qualifyingFrequencies: number[] = [];
+       qualifiedEvents.forEach((event) => {
+         if (qualifyingFrequencies.some((frequency) => sameCutFrequency(frequency, event.frequency)))
+           return;
+         const matchingEvents = qualifiedEvents.filter((candidate) =>
+           candidate.qualified && sameCutFrequency(candidate.frequency, event.frequency));
+         if (matchingEvents.length >= recurringCutThreshold
+           && calibrationHasPeakAtFrequency(snapshot.calibrationResponseDb, event.frequency))
+           qualifyingFrequencies.push(event.frequency);
+       });
+       if (qualifyingFrequencies.length > 0) {
+         const alert = {
+           route: snapshot.route,
+           frequencies: qualifyingFrequencies.slice(0, maximumSuggestedCuts),
+         };
         recurringCutAlertRef.current = alert;
         setRecurringCutAlert(alert);
-        void bridge?.command('set_manual_notch', {
-          route: alert.route - 1,
-          frequency: alert.frequency,
-        }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to hold the recurring cut'));
+         if (recurringCutAlertTimer.current !== null)
+           window.clearTimeout(recurringCutAlertTimer.current);
+         recurringCutAlertTimer.current = window.setTimeout(() => {
+           recurringCutAlertRef.current = null;
+           recurringCutAlertTimer.current = null;
+           setRecurringCutAlert(null);
+         }, recurringCutDisplayMs);
       }
     });
   }, [nativeReady, telemetry.routeTelemetry]);
@@ -670,11 +700,27 @@ function Home() {
     if (!bridge || !nativeReady || !audioRunning) return;
      void bridge.command('set_protection', { route: activeRoute, depth: nextValue }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to change cut depth'));
    };
+   const flushSensitivityCommand = () => {
+      if (sensitivityCommandTimer.current !== null) {
+        window.clearTimeout(sensitivityCommandTimer.current);
+        sensitivityCommandTimer.current = null;
+      }
+      const pending = pendingSensitivityCommand.current;
+      pendingSensitivityCommand.current = null;
+      if (!pending || !bridge || !nativeReady || !audioRunning) return;
+      void bridge.command('set_protection', {
+        route: pending.route,
+        sensitivity: pending.value,
+      }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to change feedback sensitivity'));
+   };
    const setSensitivity = (value: number) => {
      const nextValue = Math.max(0, Math.min(1, value));
      setRoutes((items) => items.map((route) => route.id === activeRoute + 1 ? { ...route, sensitivity: nextValue } : route));
      if (!bridge || !nativeReady || !audioRunning) return;
-     void bridge.command('set_protection', { route: activeRoute, sensitivity: nextValue }).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to change feedback sensitivity'));
+      pendingSensitivityCommand.current = { route: activeRoute, value: nextValue };
+      if (sensitivityCommandTimer.current !== null)
+        window.clearTimeout(sensitivityCommandTimer.current);
+      sensitivityCommandTimer.current = window.setTimeout(flushSensitivityCommand, 75);
   };
   const setTiming = (value: number) => {
     const nextValue = Math.max(0, Math.min(1, value));
@@ -738,8 +784,8 @@ function Home() {
          <div className="calibration-controls"><label className="mapping-field"><span>Calibration route</span><select value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))}>{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}{!route.enabled ? ' · standby' : ''}</option>)}</select></label><button type="button" className="plain-button footer-bypass" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteMapped} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : !activeRouteState.enabled ? `Arm & calibrate Route ${activeRoute + 1}` : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="plain-button calibration-reset-button" disabled={!nativeReady || !activeCalibration || telemetry.calibrating} onClick={resetCalibration}><RotateCcw size={14} /> Reset Route {activeRoute + 1}</button><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button></div>
       </section>
        <section className="route-focus-stack">
-            <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector uses a virtual flat reference until calibration adds measured room weighting. Armed routes share 32 adaptive notch slots; disarmed routes return their share to the remaining routes.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / {activeNotchCapacity} cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} />{recurringCutAlert?.route === activeRoute + 1 && <div className="recurring-cut-alert" role="status" aria-live="polite"><span>Consider doing a cut at <strong>{recurringCutAlert.frequency.toLocaleString('en-US', { maximumFractionDigits: 0 })} Hz</strong>.</span><button type="button" className="recurring-cut-dismiss" onClick={dismissRecurringCutAlert} aria-label={`Dismiss suggested ${Math.round(recurringCutAlert.frequency)} Hz cut`} title="Dismiss suggested cut"><X size={15} /></button></div>}</section>
-        <section className={`panel route-protection-panel ${protectionActive ? '' : 'is-bypassed'}`}><div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> route {activeRoute + 1} protection</div><h3 className="section-title">{protectionActive ? 'Suppression armed' : 'Suppression bypassed'}</h3><p className="section-note">Depth controls cut strength. Sensitivity controls how readily feedback candidates clear the detector threshold. Measured hotspots must recur quickly before the native engine can latch them automatically.</p></div><Badge tone={protectionActive ? 'green' : 'red'}>{protectionActive ? 'armed' : 'bypassed'}</Badge></div><div className="mode-switch"><button type="button" className={preset === 'speech' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'speech')}><Mic2 size={13} /> Speech</button><button type="button" className={preset === 'music' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'music')}><Waves size={13} /> Music</button></div><div className="protection-slider-stack"><div className="route-fader"><div className="fader-copy"><div className="curve-name"><TimerReset size={14} /> Timing <span className="slider-readout">{timingReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeTiming * 100)} disabled={!nativeReady} onChange={(event) => setTiming(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} notch timing`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeTiming * 100)}%, #4a3025 ${Math.round(activeTiming * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><LockKeyhole size={14} /> Latch <span className="slider-readout">{latchReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeLatch * 100)} disabled={!nativeReady} onChange={(event) => setLatch(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} notch latch`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeLatch * 100)}%, #4a3025 ${Math.round(activeLatch * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><SlidersHorizontal size={14} /> Depth <span className="slider-readout">{depthReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeDepth * 100)} disabled={!nativeReady} onChange={(event) => setDepth(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} cut depth`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeDepth * 100)}%, #4a3025 ${Math.round(activeDepth * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><Radio size={14} /> Sensitivity <span className="slider-readout">{sensitivityReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeSensitivity * 100)} disabled={!nativeReady} onChange={(event) => setSensitivity(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} feedback sensitivity`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeSensitivity * 100)}%, #4a3025 ${Math.round(activeSensitivity * 100)}%, #4a3025 100%)` }} /></div></div></div></section>
+             <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector uses a virtual flat reference until calibration adds measured room weighting. Armed routes share 32 adaptive notch slots; disarmed routes return their share to the remaining routes.</p></div><span className="slot-count">{activeNotches?.length ?? 0} / {activeNotchCapacity} cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} />{recurringCutAlert?.route === activeRoute + 1 && <div className="recurring-cut-alert" role="status" aria-live="polite"><span>Consider manual cuts at <strong>{recurringCutAlert.frequencies.map((frequency) => `${frequency.toLocaleString('en-US', { maximumFractionDigits: 0 })} Hz`).join(', ')}</strong>.</span></div>}</section>
+         <section className={`panel route-protection-panel ${protectionActive ? '' : 'is-bypassed'}`}><div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> route {activeRoute + 1} protection</div><h3 className="section-title">{protectionActive ? 'Suppression armed' : 'Suppression bypassed'}</h3><p className="section-note">Depth controls cut strength. Sensitivity follows a shaped curve: about +5 dB on 20–350 Hz, flat through the mids, then down to about −5 dB from 1.5–4 kHz onward. Measured hotspots skip probing and suppress at full depth immediately.</p></div><Badge tone={protectionActive ? 'green' : 'red'}>{protectionActive ? 'armed' : 'bypassed'}</Badge></div><div className="mode-switch"><button type="button" className={preset === 'speech' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'speech')}><Mic2 size={13} /> Speech</button><button type="button" className={preset === 'music' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'music')}><Waves size={13} /> Music</button></div><div className="protection-slider-stack"><div className="route-fader"><div className="fader-copy"><div className="curve-name"><TimerReset size={14} /> Timing <span className="slider-readout">{timingReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeTiming * 100)} disabled={!nativeReady} onChange={(event) => setTiming(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} notch timing`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeTiming * 100)}%, #4a3025 ${Math.round(activeTiming * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><LockKeyhole size={14} /> Latch <span className="slider-readout">{latchReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeLatch * 100)} disabled={!nativeReady} onChange={(event) => setLatch(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} notch latch`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeLatch * 100)}%, #4a3025 ${Math.round(activeLatch * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><SlidersHorizontal size={14} /> Depth <span className="slider-readout">{depthReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeDepth * 100)} disabled={!nativeReady} onChange={(event) => setDepth(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} cut depth`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeDepth * 100)}%, #4a3025 ${Math.round(activeDepth * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><Radio size={14} /> Sensitivity <span className="slider-readout">{sensitivityReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeSensitivity * 100)} disabled={!nativeReady} onChange={(event) => setSensitivity(Number(event.target.value) / 100)} onPointerUp={flushSensitivityCommand} onKeyUp={flushSensitivityCommand} aria-label={`Route ${activeRoute + 1} feedback sensitivity`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeSensitivity * 100)}%, #4a3025 ${Math.round(activeSensitivity * 100)}%, #4a3025 100%)` }} /></div></div></div></section>
        <section className="panel telemetry-panel">
         <div className="panel-heading"><div><div className="section-kicker"><Gauge size={14} /> live readings</div><h3 className="section-title">Engine and signal health</h3><p className="section-note">Telemetry stays visible below the control sections so live operation can be monitored without moving the routing controls.</p></div><Badge tone={audioRunning ? 'green' : 'quiet'}>{audioRunning ? 'audio running' : nativeReady ? 'engine connected' : 'waiting for engine'}</Badge></div>
         <div className="metrics">{[

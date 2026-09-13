@@ -384,6 +384,13 @@ int main() {
             werfeed::maximumSuppressionDepth(1.0f) <= -37.8f);
     REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(0.0f) - 0.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(1.0f) - (-70.0f)) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20.0f) - 5.0f) < 0.01f);
+    REQUIRE(werfeed::frequencyThresholdAdjustmentDb(100.0f) >
+            werfeed::frequencyThresholdAdjustmentDb(350.0f));
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(350.0f)) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(1500.0f)) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(4000.0f) + 5.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 5.0f) < 0.01f);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.79f) == 420);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.8f) == 480);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(1.0f) == 520);
@@ -473,8 +480,9 @@ int main() {
     REQUIRE(std::count_if(twoToneSnapshot.notches.begin(), twoToneSnapshot.notches.end(),
         [](const werfeed::NotchSnapshot& notch) { return notch.active; }) >= 2);
 
-    // Three low-mid peaks that need their own narrow cuts should be collapsed
-    // into one weighted-center cut with a wider band and slightly deeper depth.
+    // Adjacent low-mid peaks that need their own narrow cuts should be
+    // collapsed into one weighted-center cut with a wider band and slightly
+    // deeper depth.
     auto coupledLowMid = std::make_unique<werfeed::FeedbackProcessor>();
     coupledLowMid->prepare(rate); coupledLowMid->clearBaseline();
     coupledLowMid->setEnabled(true); coupledLowMid->setSuppressionAmount(1.0f);

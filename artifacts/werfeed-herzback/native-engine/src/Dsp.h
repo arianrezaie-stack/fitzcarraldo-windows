@@ -260,6 +260,31 @@ inline float feedbackAmplitudeThresholdDb(float sensitivity) noexcept {
     return -70.0f * clamped;
 }
 
+inline float frequencyThresholdAdjustmentDb(float frequency) noexcept {
+    // Keep the detector slightly conservative around low-frequency program
+    // energy, neutral through the mid band, and more responsive to the
+    // narrower high-frequency feedback modes.
+    constexpr float lowAdjustmentDb = 5.0f;
+    constexpr float highAdjustmentDb = -5.0f;
+    constexpr float lowStartHz = 20.0f;
+    constexpr float lowEndHz = 350.0f;
+    constexpr float highStartHz = 1500.0f;
+    constexpr float highEndHz = 4000.0f;
+    if (frequency <= lowStartHz) return lowAdjustmentDb;
+    if (frequency < lowEndHz) {
+        const auto position = std::log(frequency / lowStartHz) /
+            std::log(lowEndHz / lowStartHz);
+        return lowAdjustmentDb * (1.0f - static_cast<float>(position));
+    }
+    if (frequency <= highStartHz) return 0.0f;
+    if (frequency < highEndHz) {
+        const auto position = std::log(frequency / highStartHz) /
+            std::log(highEndHz / highStartHz);
+        return highAdjustmentDb * static_cast<float>(position);
+    }
+    return highAdjustmentDb;
+}
+
 inline std::size_t persistentNotchLimit(std::size_t capacity, float amount) noexcept {
     const auto clamped = std::clamp(amount, 0.0f, 1.0f);
     return std::min(capacity, static_cast<std::size_t>(
@@ -279,11 +304,6 @@ inline int persistentRecurrenceRequirement(float latchAmount) noexcept {
 
 inline float persistentMinimumProbeDepthDb(float latchAmount) noexcept {
     return std::clamp(latchAmount, 0.0f, 1.0f) >= 0.8f ? 10.0f : 12.0f;
-}
-
-inline float highFrequencyThresholdReduction(float frequency) noexcept {
-    if (frequency <= 1000.0f) return 0.0f;
-    return std::min(5.0f, 1.5f * std::log2(frequency / 1000.0f));
 }
 
 // Single-producer/single-consumer audio handoff. The audio callback is the
@@ -471,7 +491,7 @@ public:
             publishedNotchResetGeneration.store(requestedReset, std::memory_order_release);
         }
         const auto capacity = getNotchCapacity();
-        const auto releaseSmoothing = 0.00025f + 0.0007f * (1.0f - getTimingAmount());
+        const auto releaseSmoothing = 0.00035f + 0.0009f * (1.0f - getTimingAmount());
         for (std::size_t i = 0; i < capacity; ++i) {
             const auto before = targetSequence[i].load(std::memory_order_acquire);
             if ((before & 1u) != 0u) continue;
@@ -788,10 +808,11 @@ private:
                 : 9.0f - 1.5f * candidateLegacyAmount
                     - 3.0f * candidateExtraSensitivity;
             const auto calibratedEngageThreshold = std::max(
-                0.25f, candidateEngageAboveBaseline - highFrequencyThresholdReduction(frequency) -
+                0.25f, candidateEngageAboveBaseline + frequencyThresholdAdjustmentDb(frequency) -
                     std::min(5.0f, measuredPeakBias * 0.65f));
             const auto amplitudeThresholdDb =
-                feedbackAmplitudeThresholdDb(candidateSensitivity);
+                feedbackAmplitudeThresholdDb(candidateSensitivity) +
+                frequencyThresholdAdjustmentDb(frequency);
             // Broad speech fundamentals and harmonics are less likely to pass
             // this wider neighborhood comparison than a narrow room howl.
             const auto tonal = level - neighborhoodLevel;
@@ -894,8 +915,8 @@ private:
             const auto effectiveReleaseHoldFrames = static_cast<int>(std::ceil(
                 static_cast<float>(notch.releaseHoldFrames) * releaseHoldScale));
             if (notch.quietFrames <= effectiveReleaseHoldFrames) continue;
-            const auto ordinaryReleaseStep = 0.12f - 0.07f * amount;
-            const auto hotspotReleaseFactor = 0.6f - 0.3f * timing +
+            const auto ordinaryReleaseStep = 0.15f - 0.08f * amount;
+            const auto hotspotReleaseFactor = 0.7f - 0.35f * timing +
                 (1.0f - latch) * (0.4f + 0.3f * timing);
             const auto releaseStep = notch.calibrationHotspot
                 ? ordinaryReleaseStep * hotspotReleaseFactor *
@@ -1016,10 +1037,10 @@ private:
     }
     void consolidateCoupledNotches(std::size_t capacity) noexcept {
         // A low-frequency room mode can drift across a few nearby FFT peaks.
-        // When expanded route capacity lets three or more cuts collect in one
-        // third-octave area, use one wider and slightly deeper cut instead.
-        constexpr float maximumClusterFrequency = 1200.0f;
-        constexpr float maximumClusterSpanOctaves = 1.0f / 3.0f;
+        // When expanded route capacity lets adjacent cuts collect in one
+        // half-octave area, use one wider and slightly deeper cut instead.
+        constexpr float maximumClusterFrequency = 4000.0f;
+        constexpr float maximumClusterSpanOctaves = 1.0f / 2.0f;
         std::array<std::size_t, maxNotches> sortedIndices {};
         std::size_t count = 0;
         for (std::size_t i = 0; i < capacity; ++i) {
@@ -1044,7 +1065,7 @@ private:
                 ++groupEnd;
             }
             const auto groupSize = groupEnd - groupStart;
-            if (groupSize < 3) {
+            if (groupSize < 2) {
                 ++groupStart;
                 continue;
             }
@@ -1072,9 +1093,9 @@ private:
             }
             const auto centerFrequency = std::exp(weightedLogFrequency /
                 std::max(1.0f, totalWeight));
-        const auto maximumDepth = maximumSuppressionDepth(getDepthAmount());
+            const auto maximumDepth = maximumSuppressionDepth(getDepthAmount());
             const auto addedDepth = std::min(3.0f,
-                1.25f * static_cast<float>(groupSize - 2));
+                1.0f + 0.75f * static_cast<float>(groupSize - 2));
             auto& merged = analysisNotches[survivor];
             merged.frequency = centerFrequency;
             merged.q = std::max(4.0f, notchQualityForCalibrationHotspot(

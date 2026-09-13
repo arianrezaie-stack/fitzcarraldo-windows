@@ -362,6 +362,7 @@ public:
     void audioDeviceIOCallbackWithContext(const float* const* input, int ins,
                                           float* const* output, int outs, int samples,
                                           const juce::AudioIODeviceCallbackContext&) override {
+        juce::ScopedNoDenormals noDenormals;
         const auto begun = std::chrono::steady_clock::now();
         const auto rate = sampleRate.load(std::memory_order_relaxed);
         const auto expectedPeriod = samples / std::max(1.0, rate);
@@ -491,7 +492,8 @@ public:
         const auto previousExecutionPeak = callbackExecutionPeakMs.load(std::memory_order_relaxed);
         if (elapsedMs > previousExecutionPeak)
             callbackExecutionPeakMs.store(elapsedMs, std::memory_order_relaxed);
-        const auto budget = samples / sampleRate.load();
+        const auto currentRate = std::max(1.0, sampleRate.load());
+        const auto budget = static_cast<double>(std::max(0, samples)) / currentRate;
         cpu.store(budget > 0.0 ? elapsed / budget : 0.0, std::memory_order_relaxed);
         if (elapsed > budget) callbackDeadlineMisses.fetch_add(1, std::memory_order_relaxed);
     }
