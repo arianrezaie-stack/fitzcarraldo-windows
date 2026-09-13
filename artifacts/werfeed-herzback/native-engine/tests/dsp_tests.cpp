@@ -406,9 +406,17 @@ int main() {
     REQUIRE(werfeed::detectionPersistenceFrames(
                 werfeed::ProtectionPreset::speech, 4000.0f) == 1);
     REQUIRE(werfeed::detectionPersistenceFrames(
-                werfeed::ProtectionPreset::music, 4000.0f) == 40);
+                werfeed::ProtectionPreset::music, 4000.0f) == 1);
     REQUIRE(werfeed::detectionPersistenceFrames(
-                werfeed::ProtectionPreset::music, 500.0f) == 56);
+                werfeed::ProtectionPreset::music, 500.0f) == 1);
+    REQUIRE(werfeed::notchAttackSmoothingForPreset(
+                werfeed::ProtectionPreset::speech) >
+            werfeed::notchAttackSmoothingForPreset(
+                werfeed::ProtectionPreset::music));
+    REQUIRE(std::abs(werfeed::notchAttackSmoothingForPreset(
+                         werfeed::ProtectionPreset::speech) - 0.0014f) < 0.00001f);
+    REQUIRE(std::abs(werfeed::notchAttackSmoothingForPreset(
+                         werfeed::ProtectionPreset::music) - 0.00055f) < 0.00001f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20.0f) - 10.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(150.0f) - 10.0f) < 0.01f);
     REQUIRE(werfeed::frequencyThresholdAdjustmentDb(200.0f) >

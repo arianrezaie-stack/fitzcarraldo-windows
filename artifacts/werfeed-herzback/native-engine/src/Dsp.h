@@ -358,13 +358,18 @@ inline float detectorAmplitudeThresholdDb(float sensitivity,
         detectorFrequencyThresholdAdjustmentDb(frequency, preset);
 }
 
-inline int detectionPersistenceFrames(ProtectionPreset preset,
-                                      float frequency) noexcept {
-    if (preset == ProtectionPreset::speech) return 1;
-    // Music starts a little more deliberately so sustained program material
-    // does not make the first cut feel abrupt; the existing raw-source
-    // confirmation still follows after this persistence gate.
-    return frequency > 1000.0f ? 40 : 56;
+inline int detectionPersistenceFrames(ProtectionPreset,
+                                      float) noexcept {
+    // Both presets begin the cut candidate immediately. Music transparency is
+    // controlled by the notch attack smoothing, not by delaying detection.
+    return 1;
+}
+
+inline float notchAttackSmoothingForPreset(ProtectionPreset preset) noexcept {
+    constexpr float speechAttackSmoothing = 0.0014f;
+    constexpr float musicAttackSmoothing = 0.00055f;
+    return preset == ProtectionPreset::music
+        ? musicAttackSmoothing : speechAttackSmoothing;
 }
 
 inline std::size_t persistentNotchLimit(std::size_t capacity, float amount) noexcept {
@@ -588,6 +593,8 @@ public:
 
             auto& state = states[i];
             state.releaseSmoothing = releaseSmoothing;
+            state.attackSmoothing = notchAttackSmoothingForPreset(
+                preset.load(std::memory_order_relaxed));
             if (frequency <= 0.0f && state.frequency > 0.0f) {
                 state = {};
                 state.sampleRate = sampleRate;
@@ -675,6 +682,7 @@ private:
         bool calibrationHotspot = false;
         int releaseHoldFrames = 8;
         int quietFrames = 0;
+        float attackSmoothing = 0.0014f;
         float releaseSmoothing = 0.00025f;
         float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
         float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
@@ -683,7 +691,7 @@ private:
         double sampleRate = 48000;
         float process(float x) noexcept {
             const auto movingDeeper = targetDepthDb < currentDepthDb;
-            const auto smoothing = movingDeeper ? 0.0014f : releaseSmoothing;
+            const auto smoothing = movingDeeper ? attackSmoothing : releaseSmoothing;
             currentDepthDb += (targetDepthDb - currentDepthDb) * smoothing;
             if (std::abs(currentDepthDb) < 0.005f || frequency <= 0) return x;
             if (coefficientCountdown-- <= 0) {
