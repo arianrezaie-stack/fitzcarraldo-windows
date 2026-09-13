@@ -587,12 +587,14 @@ public:
                 n->setProperty("frequency", notch.frequency);
                 n->setProperty("depthDb", notch.depthDb);
                 n->setProperty("q", notch.q);
+                n->setProperty("emergency", notch.emergency);
                 routeNotches.add(juce::var(n));
                 if (routeIndex == 0) {
                     auto* legacyNotch = new juce::DynamicObject();
                     legacyNotch->setProperty("frequency", notch.frequency);
                     legacyNotch->setProperty("depthDb", notch.depthDb);
                     legacyNotch->setProperty("q", notch.q);
+                    legacyNotch->setProperty("emergency", notch.emergency);
                     notches.add(juce::var(legacyNotch));
                 }
             }

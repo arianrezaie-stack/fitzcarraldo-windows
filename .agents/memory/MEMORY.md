@@ -16,3 +16,5 @@
 - [Two-stage feedback probe](two-stage-feedback-probe.md) — shallow native probe plus raw-source reassessment prevents normal tones from receiving full notches.
 - [Clock telemetry](clock-telemetry.md) — keep callback scheduling jitter, deadline misses, driver xruns, and device-clock drift as separate readings.
 - [Calibration reference normalization](calibration-reference-normalization.md) — target a −3 dB median across the full 20 Hz–20 kHz curve with one constant offset.
+- [Hotspot sensitivity scaling](hotspot-sensitivity-scaling.md) — scale calibrated hotspot sensitivity from measured excess above the calibration baseline, with bounded lift.
+- [High-shelf floor visualization](high-shelf-floor-visualization.md) — apply shelf offsets before threshold clamps, share the raw dB plot scale, and gate FFT leakage below deep high-band floors.

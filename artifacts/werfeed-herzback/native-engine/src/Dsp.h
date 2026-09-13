@@ -35,6 +35,7 @@ struct NotchSnapshot {
     float depthDb = 0.0f;
     float q = 0.0f;
     bool active = false;
+    bool emergency = false;
 };
 
 struct ProtectionSnapshot {
@@ -315,12 +316,12 @@ inline float frequencyThresholdAdjustmentDb(float frequency) noexcept {
     // neutral through the mid band, and more responsive to narrower
     // high-frequency feedback modes.
     constexpr float lowAdjustmentDb = 10.0f;
-    constexpr float highAdjustmentDb = -30.0f;
+    constexpr float highAdjustmentDb = -12.0f;
     constexpr float lowStartHz = 20.0f;
     constexpr float lowShelfEndHz = 150.0f;
     constexpr float lowEndHz = 500.0f;
     constexpr float highStartHz = 1500.0f;
-    constexpr float highEndHz = 8000.0f;
+    constexpr float highEndHz = 4000.0f;
     if (frequency <= lowShelfEndHz) return lowAdjustmentDb;
     if (frequency < lowEndHz) {
         const auto position = std::log(frequency / lowShelfEndHz) /
@@ -364,12 +365,13 @@ inline float detectorEngageThresholdDb(float sensitivity,
             - 3.0f * candidateExtraSensitivity
         : 9.0f - 1.5f * candidateLegacyAmount
             - 3.0f * candidateExtraSensitivity;
+    const auto hotspotReduction = calibrationHotspot
+        ? std::min(5.0f, std::max(0.0f, measuredPeakBias) * 0.65f)
+        : 0.0f;
     return std::max(
         0.25f, engageAboveBaseline +
             detectorFrequencyThresholdAdjustmentDb(frequency, preset) -
-            (calibrationHotspot
-                ? std::min(5.0f, std::max(0.0f, measuredPeakBias) * 0.65f)
-                : 0.0f));
+            hotspotReduction);
 }
 
 inline float detectorAmplitudeThresholdDb(float sensitivity,
@@ -483,12 +485,14 @@ public:
             publishedFrequency[i].store(0.0f);
             publishedDepth[i].store(0.0f);
             publishedQ[i].store(0.0f);
+            publishedEmergency[i].store(false);
             targetFrequency[i].store(0.0f);
             targetDepth[i].store(0.0f);
             targetQ[i].store(0.0f);
             targetSinW[i].store(0.0f);
             targetNegTwoCosW[i].store(0.0f);
             targetHotspot[i].store(false);
+            targetEmergency[i].store(false);
             targetSequence[i].store(0, std::memory_order_relaxed);
         }
         float discard[1024];
@@ -612,6 +616,7 @@ public:
             const auto sinW = targetSinW[i].load(std::memory_order_relaxed);
             const auto negTwoCosW = targetNegTwoCosW[i].load(std::memory_order_relaxed);
             const auto hotspot = targetHotspot[i].load(std::memory_order_relaxed);
+            const auto emergency = targetEmergency[i].load(std::memory_order_relaxed);
             const auto after = targetSequence[i].load(std::memory_order_acquire);
             if (before != after || (after & 1u) != 0u) continue;
 
@@ -629,12 +634,14 @@ public:
                 state.sinW = sinW;
                 state.negTwoCosW = negTwoCosW;
                 state.calibrationHotspot = hotspot;
+                state.emergency = emergency;
             }
         }
         for (std::size_t i = 0; i < capacity; ++i) {
             publishedFrequency[i].store(states[i].frequency, std::memory_order_relaxed);
             publishedDepth[i].store(states[i].currentDepthDb, std::memory_order_relaxed);
             publishedQ[i].store(states[i].q, std::memory_order_relaxed);
+            publishedEmergency[i].store(states[i].emergency, std::memory_order_relaxed);
         }
     }
 
@@ -683,10 +690,11 @@ public:
             const auto frequency = publishedFrequency[i].load(std::memory_order_relaxed);
             const auto depth = publishedDepth[i].load(std::memory_order_relaxed);
             const auto q = publishedQ[i].load(std::memory_order_relaxed);
+            const auto emergency = publishedEmergency[i].load(std::memory_order_relaxed);
             // Do not report a notch while it is only carrying a sub-dB
             // release tail; the UI and telemetry should describe audible
             // protection moves, not filter state that is already gone.
-            result.notches[i] = { frequency, depth, q, depth < -1.0f };
+            result.notches[i] = { frequency, depth, q, depth < -1.0f, emergency };
             if (result.notches[i].active) {
                 ++result.activeNotches;
                 result.maximumCutDb = std::min(result.maximumCutDb, depth);
@@ -704,6 +712,7 @@ private:
     struct Notch {
         float frequency = 0, q = 8, currentDepthDb = 0, targetDepthDb = 0;
         bool calibrationHotspot = false;
+        bool emergency = false;
         int releaseHoldFrames = 8;
         int quietFrames = 0;
         float attackSmoothing = 0.0014f;
@@ -1089,6 +1098,7 @@ private:
             targetNegTwoCosW[i].store(w == 0.0f ? 0.0f : -2.0f * std::cos(w),
                                       std::memory_order_relaxed);
             targetHotspot[i].store(analysisNotches[i].calibrationHotspot, std::memory_order_relaxed);
+            targetEmergency[i].store(analysisNotches[i].emergency, std::memory_order_relaxed);
             targetSequence[i].store(sequence + 2u, std::memory_order_release);
         }
         std::copy(analysisBuffer.begin() + static_cast<std::ptrdiff_t>(analysisHop),
@@ -1455,9 +1465,10 @@ private:
     std::array<Notch, maxNotches> states {};
     std::array<std::atomic<float>, analyzerBins> publishedSpectrum {};
     std::array<std::atomic<float>, maxNotches> publishedFrequency {}, publishedDepth {}, publishedQ {};
+    std::array<std::atomic<bool>, maxNotches> publishedEmergency {};
     std::array<std::atomic<float>, maxNotches> targetFrequency {}, targetDepth {}, targetQ {};
     std::array<std::atomic<float>, maxNotches> targetSinW {}, targetNegTwoCosW {};
-    std::array<std::atomic<bool>, maxNotches> targetHotspot {};
+    std::array<std::atomic<bool>, maxNotches> targetHotspot {}, targetEmergency {};
     std::array<std::atomic<float>, maxNotches> manualNotchFrequency {};
     std::array<std::atomic<unsigned int>, maxNotches> targetSequence {};
     std::atomic<std::size_t> notchCapacity { defaultNotchesPerRoute };

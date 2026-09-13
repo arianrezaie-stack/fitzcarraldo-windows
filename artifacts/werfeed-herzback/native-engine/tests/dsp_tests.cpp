@@ -437,12 +437,17 @@ int main() {
             werfeed::frequencyThresholdAdjustmentDb(500.0f));
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(500.0f)) < 0.01f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(1500.0f)) < 0.01f);
-    REQUIRE(werfeed::frequencyThresholdAdjustmentDb(4000.0f) <
-            werfeed::frequencyThresholdAdjustmentDb(1500.0f));
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(4000.0f) + 12.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(6000.0f) + 12.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(
-                         std::sqrt(1500.0f * 8000.0f)) + 15.0f) < 0.01f);
-    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(8000.0f) + 30.0f) < 0.01f);
-    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 30.0f) < 0.01f);
+                         std::sqrt(1500.0f * 4000.0f)) + 6.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(8000.0f) + 12.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 12.0f) < 0.01f);
+    const auto speechFlatGate = werfeed::detectorEngageThresholdDb(
+        0.75f, werfeed::ProtectionPreset::speech, false, 0.0f, 1500.0f);
+    const auto speechHighGate = werfeed::detectorEngageThresholdDb(
+        0.75f, werfeed::ProtectionPreset::speech, false, 0.0f, 8000.0f);
+    REQUIRE(std::abs(speechHighGate - speechFlatGate + 1.5f) < 0.01f);
     REQUIRE(std::abs(werfeed::detectorFrequencyThresholdAdjustmentDb(
                         20.0f, werfeed::ProtectionPreset::music)) < 0.01f);
     REQUIRE(std::abs(werfeed::detectorFrequencyThresholdAdjustmentDb(
