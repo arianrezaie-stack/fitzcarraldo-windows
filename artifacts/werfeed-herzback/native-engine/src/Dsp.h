@@ -287,11 +287,11 @@ inline float detectorSensitivityAmount(float sensitivity,
 }
 
 inline float frequencyThresholdAdjustmentDb(float frequency) noexcept {
-    // Keep the detector slightly conservative around low-frequency program
-    // energy, neutral through the mid band, and more responsive to the
-    // narrower high-frequency feedback modes.
-    constexpr float lowAdjustmentDb = 5.0f;
-    constexpr float highAdjustmentDb = -5.0f;
+    // Keep the detector conservative around low-frequency program energy,
+    // neutral through the mid band, and more responsive to narrower
+    // high-frequency feedback modes.
+    constexpr float lowAdjustmentDb = 10.0f;
+    constexpr float highAdjustmentDb = -10.0f;
     constexpr float lowStartHz = 20.0f;
     constexpr float lowEndHz = 350.0f;
     constexpr float highStartHz = 1500.0f;
