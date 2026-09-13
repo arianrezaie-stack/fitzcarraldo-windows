@@ -312,6 +312,14 @@ inline float frequencyThresholdAdjustmentDb(float frequency) noexcept {
     return highAdjustmentDb;
 }
 
+inline float detectorFrequencyThresholdAdjustmentDb(
+    float frequency,
+    ProtectionPreset preset) noexcept {
+    return preset == ProtectionPreset::speech
+        ? frequencyThresholdAdjustmentDb(frequency)
+        : 0.0f;
+}
+
 inline float detectorEngageThresholdDb(float sensitivity,
                                        ProtectionPreset preset,
                                        bool calibrationHotspot,
@@ -333,7 +341,8 @@ inline float detectorEngageThresholdDb(float sensitivity,
         : 9.0f - 1.5f * candidateLegacyAmount
             - 3.0f * candidateExtraSensitivity;
     return std::max(
-        0.25f, engageAboveBaseline + frequencyThresholdAdjustmentDb(frequency) -
+        0.25f, engageAboveBaseline +
+            detectorFrequencyThresholdAdjustmentDb(frequency, preset) -
             (calibrationHotspot
                 ? std::min(5.0f, std::max(0.0f, measuredPeakBias) * 0.65f)
                 : 0.0f));
@@ -342,10 +351,11 @@ inline float detectorEngageThresholdDb(float sensitivity,
 inline float detectorAmplitudeThresholdDb(float sensitivity,
                                           bool calibrationHotspot,
                                           float frequency,
-                                          float measuredPeakBias = 0.0f) noexcept {
+                                          float measuredPeakBias = 0.0f,
+                                          ProtectionPreset preset = ProtectionPreset::speech) noexcept {
     return feedbackAmplitudeThresholdDb(
         detectorSensitivityAmount(sensitivity, calibrationHotspot, measuredPeakBias)) +
-        frequencyThresholdAdjustmentDb(frequency);
+        detectorFrequencyThresholdAdjustmentDb(frequency, preset);
 }
 
 inline std::size_t persistentNotchLimit(std::size_t capacity, float amount) noexcept {
@@ -862,7 +872,7 @@ private:
             const auto calibratedEngageThreshold = detectorEngageThresholdDb(
                 amount, selectedPreset, calibrationHotspot, measuredPeakBias, frequency);
             const auto amplitudeThresholdDb = detectorAmplitudeThresholdDb(
-                amount, calibrationHotspot, frequency, measuredPeakBias);
+                amount, calibrationHotspot, frequency, measuredPeakBias, selectedPreset);
             // Broad speech fundamentals and harmonics are less likely to pass
             // this wider neighborhood comparison than a narrow room howl.
             const auto tonal = level - neighborhoodLevel;

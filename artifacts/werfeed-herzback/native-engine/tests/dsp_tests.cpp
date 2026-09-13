@@ -404,6 +404,10 @@ int main() {
             werfeed::frequencyThresholdAdjustmentDb(1500.0f));
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(8000.0f) + 18.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 18.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorFrequencyThresholdAdjustmentDb(
+                        20.0f, werfeed::ProtectionPreset::music)) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorFrequencyThresholdAdjustmentDb(
+                        20000.0f, werfeed::ProtectionPreset::music)) < 0.01f);
     const auto ordinaryLowGate = werfeed::detectorEngageThresholdDb(
         0.1f, werfeed::ProtectionPreset::speech, false, 0.0f, 100.0f);
     const auto hotspotLowGate = werfeed::detectorEngageThresholdDb(
@@ -416,6 +420,17 @@ int main() {
             werfeed::detectorAmplitudeThresholdDb(0.1f, true, 100.0f));
     REQUIRE(werfeed::detectorAmplitudeThresholdDb(0.1f, true, 1000.0f, 8.0f) <
             werfeed::detectorAmplitudeThresholdDb(0.1f, true, 1000.0f, 1.5f));
+    const auto musicLowGate = werfeed::detectorEngageThresholdDb(
+        0.1f, werfeed::ProtectionPreset::music, false, 0.0f, 20.0f);
+    const auto musicHighGate = werfeed::detectorEngageThresholdDb(
+        0.1f, werfeed::ProtectionPreset::music, false, 0.0f, 20000.0f);
+    REQUIRE(std::abs(musicLowGate - musicHighGate) < 0.01f);
+    REQUIRE(std::abs(
+                werfeed::detectorAmplitudeThresholdDb(
+                    0.1f, false, 20.0f, 0.0f, werfeed::ProtectionPreset::music) -
+                werfeed::detectorAmplitudeThresholdDb(
+                    0.1f, false, 20000.0f, 0.0f, werfeed::ProtectionPreset::music)) <
+            0.01f);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.79f) == 420);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.8f) == 480);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(1.0f) == 520);
