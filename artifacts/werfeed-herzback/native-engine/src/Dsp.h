@@ -260,6 +260,14 @@ inline float feedbackAmplitudeThresholdDb(float sensitivity) noexcept {
     return -70.0f * clamped;
 }
 
+inline float detectorSensitivityAmount(float sensitivity,
+                                       bool calibrationHotspot) noexcept {
+    const auto clamped = std::clamp(sensitivity, 0.0f, 1.0f);
+    return calibrationHotspot
+        ? std::min(1.0f, clamped + 0.2f)
+        : clamped;
+}
+
 inline float frequencyThresholdAdjustmentDb(float frequency) noexcept {
     // Keep the detector slightly conservative around low-frequency program
     // energy, neutral through the mid band, and more responsive to the
@@ -283,6 +291,41 @@ inline float frequencyThresholdAdjustmentDb(float frequency) noexcept {
         return highAdjustmentDb * static_cast<float>(position);
     }
     return highAdjustmentDb;
+}
+
+inline float detectorEngageThresholdDb(float sensitivity,
+                                       ProtectionPreset preset,
+                                       bool calibrationHotspot,
+                                       float measuredPeakBias,
+                                       float frequency) noexcept {
+    const auto candidateSensitivity =
+        detectorSensitivityAmount(sensitivity, calibrationHotspot);
+    const auto candidateLegacyAmount = legacySuppressionAmount(candidateSensitivity);
+    const auto candidateExtraSensitivity =
+        std::clamp((candidateSensitivity - 0.8f) / 0.2f, 0.0f, 1.0f);
+    const auto candidateSpeechCore =
+        std::min(1.0f, candidateLegacyAmount / 0.7f);
+    const auto candidateSpeechExtension =
+        std::clamp((candidateLegacyAmount - 0.7f) / 0.3f, 0.0f, 1.0f);
+    const auto engageAboveBaseline = preset == ProtectionPreset::speech
+        ? 9.0f - 5.5f * candidateSpeechCore
+            - 3.5f * candidateSpeechExtension
+            - 3.0f * candidateExtraSensitivity
+        : 9.0f - 1.5f * candidateLegacyAmount
+            - 3.0f * candidateExtraSensitivity;
+    return std::max(
+        0.25f, engageAboveBaseline + frequencyThresholdAdjustmentDb(frequency) -
+            (calibrationHotspot
+                ? std::min(5.0f, std::max(0.0f, measuredPeakBias) * 0.65f)
+                : 0.0f));
+}
+
+inline float detectorAmplitudeThresholdDb(float sensitivity,
+                                          bool calibrationHotspot,
+                                          float frequency) noexcept {
+    return feedbackAmplitudeThresholdDb(
+        detectorSensitivityAmount(sensitivity, calibrationHotspot)) +
+        frequencyThresholdAdjustmentDb(frequency);
 }
 
 inline std::size_t persistentNotchLimit(std::size_t capacity, float amount) noexcept {
@@ -792,27 +835,14 @@ private:
             // A calibrated hotspot is known to be unsafe, so give it a
             // sensitivity lift above the route slider before applying the
             // ordinary baseline-relative detector gates.
-            const auto candidateSensitivity = calibrationHotspot
-                ? std::min(1.0f, amount + 0.2f) : amount;
-            const auto candidateLegacyAmount = legacySuppressionAmount(candidateSensitivity);
+            const auto candidateSensitivity =
+                detectorSensitivityAmount(amount, calibrationHotspot);
             const auto candidateExtraSensitivity =
                 std::clamp((candidateSensitivity - 0.8f) / 0.2f, 0.0f, 1.0f);
-            const auto candidateSpeechCore =
-                std::min(1.0f, candidateLegacyAmount / 0.7f);
-            const auto candidateSpeechExtension =
-                std::clamp((candidateLegacyAmount - 0.7f) / 0.3f, 0.0f, 1.0f);
-            const auto candidateEngageAboveBaseline = selectedPreset == ProtectionPreset::speech
-                ? 9.0f - 5.5f * candidateSpeechCore
-                    - 3.5f * candidateSpeechExtension
-                    - 3.0f * candidateExtraSensitivity
-                : 9.0f - 1.5f * candidateLegacyAmount
-                    - 3.0f * candidateExtraSensitivity;
-            const auto calibratedEngageThreshold = std::max(
-                0.25f, candidateEngageAboveBaseline + frequencyThresholdAdjustmentDb(frequency) -
-                    std::min(5.0f, measuredPeakBias * 0.65f));
-            const auto amplitudeThresholdDb =
-                feedbackAmplitudeThresholdDb(candidateSensitivity) +
-                frequencyThresholdAdjustmentDb(frequency);
+            const auto calibratedEngageThreshold = detectorEngageThresholdDb(
+                amount, selectedPreset, calibrationHotspot, measuredPeakBias, frequency);
+            const auto amplitudeThresholdDb = detectorAmplitudeThresholdDb(
+                amount, calibrationHotspot, frequency);
             // Broad speech fundamentals and harmonics are less likely to pass
             // this wider neighborhood comparison than a narrow room howl.
             const auto tonal = level - neighborhoodLevel;
@@ -1039,7 +1069,7 @@ private:
         // A low-frequency room mode can drift across a few nearby FFT peaks.
         // When expanded route capacity lets adjacent cuts collect in one
         // half-octave area, use one wider and slightly deeper cut instead.
-        constexpr float maximumClusterFrequency = 4000.0f;
+        constexpr float maximumClusterFrequency = 2000.0f;
         constexpr float maximumClusterSpanOctaves = 1.0f / 2.0f;
         std::array<std::size_t, maxNotches> sortedIndices {};
         std::size_t count = 0;

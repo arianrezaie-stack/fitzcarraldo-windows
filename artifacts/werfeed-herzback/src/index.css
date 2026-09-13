@@ -300,18 +300,33 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .dial-knob { position: relative; width: 32px; height: 32px; border: 1px solid #765a48; border-radius: 50%; background: #241913; box-shadow: inset 0 2px 6px #120c09; }
 .dial-knob::before { content: ""; position: absolute; top: 2px; left: 50%; width: 1px; height: 10px; background: var(--copper); transform: translateX(-50%) rotate(34deg); transform-origin: 50% 14px; }
 .dial-label { color: #a58a72; font-size: 8px; letter-spacing: .11em; text-transform: uppercase; }.dial-value { color: #eadbc5; font: 9px var(--app-font-mono); }
+.spectrum-stack { min-width: 0; }
 .spectrum { position: relative; overflow: hidden; height: 198px; cursor: crosshair; border: 1px solid #65483a; border-radius: 10px; background: #211611; box-shadow: inset 0 0 0 1px rgba(223,188,142,.04); }
 .spectrum-grid { position: absolute; inset: 0 13px; opacity: .5; background-image: linear-gradient(rgba(126,85,59,.22) 1px, transparent 1px), linear-gradient(90deg, rgba(126,85,59,.16) 1px, transparent 1px); background-size: 100% 36px, 10% 100%; }
 .spectrum-label { position: absolute; top: 10px; left: 12px; color: #a88b70; font-size: 8px; letter-spacing: .15em; text-transform: uppercase; }
 .spectrum svg { position: absolute; inset: 28px 13px 28px; width: calc(100% - 26px); height: calc(100% - 56px); }
 .spectrum-trace { fill: none; stroke: #e1bd83; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
-.notch-marker { position: absolute; top: 28px; bottom: 28px; border-left: 1px dashed #d29261; pointer-events: none; }
+.spectrum-plot-overlay { position: absolute; inset: 28px 13px; pointer-events: none; }
+.notch-band { position: absolute; bottom: 0; border: 1px solid rgba(223, 151, 92, .34); border-bottom: 0; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, rgba(204, 113, 71, .04), rgba(204, 113, 71, .24)); }
+.notch-marker { position: absolute; top: 0; bottom: 0; left: 50%; border-left: 1px dashed #e0a06d; pointer-events: none; }
 .spectrum-legend { position: absolute; bottom: 28px; left: 13px; display: flex; flex-wrap: wrap; gap: 12px; color: #c3a276; font-size: 8px; }
 .spectrum-legend span { display: flex; align-items: center; gap: 6px; }.legend-line { width: 18px; height: 1px; background: #e1bd83; }.legend-cut { height: 11px; border-left: 1px dashed #d29261; }
 .spectrum-axis { position: absolute; bottom: 8px; left: 13px; right: 13px; height: 10px; color: #9b7c63; font: 8px var(--app-font-mono); }
 .spectrum-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .spectrum-axis span.first { transform: none; }
 .spectrum-axis span.last { transform: translateX(-100%); }
+.notch-inspector { margin-top: 9px; border: 1px solid #5f4032; border-radius: 8px; padding: 9px; background: rgba(33, 20, 15, .58); }
+.notch-inspector-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: #d1b18b; font: 700 9px var(--app-font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.notch-inspector-heading small { color: #9e8068; font: 8px var(--app-font-mono); letter-spacing: 0; text-transform: none; }
+.notch-inspector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 7px; margin-top: 8px; }
+.notch-card { min-width: 0; border: 1px solid #6a4635; border-radius: 6px; padding: 8px; background: #2a1a14; }
+.notch-card-heading, .notch-card-metrics { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.notch-card-heading strong { overflow: hidden; color: #ecd6b8; font: 11px var(--app-font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.notch-card-heading span { color: #d29a61; font: 9px var(--app-font-mono); white-space: nowrap; }
+.notch-depth-track { height: 5px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: #493026; }
+.notch-depth-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #b66c46, #e0a16a); box-shadow: 0 0 8px rgba(224, 161, 106, .28); }
+.notch-card-metrics { margin-top: 7px; color: #987861; font: 8px var(--app-font-mono); text-transform: uppercase; }
+.notch-card-metrics strong { color: #d9bd97; font-weight: 700; }
 .recurring-cut-alert { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 16px; color: #b29579; font: 700 18px/1.35 var(--app-font-serif); }
 .recurring-cut-alert > span { min-width: 0; }
 .recurring-cut-alert strong { color: #fff; font-weight: 700; white-space: nowrap; }

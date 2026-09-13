@@ -384,6 +384,8 @@ int main() {
             werfeed::maximumSuppressionDepth(1.0f) <= -37.8f);
     REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(0.0f) - 0.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::feedbackAmplitudeThresholdDb(1.0f) - (-70.0f)) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorSensitivityAmount(0.6f, false) - 0.6f) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorSensitivityAmount(0.6f, true) - 0.8f) < 0.01f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20.0f) - 5.0f) < 0.01f);
     REQUIRE(werfeed::frequencyThresholdAdjustmentDb(100.0f) >
             werfeed::frequencyThresholdAdjustmentDb(350.0f));
@@ -391,6 +393,16 @@ int main() {
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(1500.0f)) < 0.01f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(4000.0f) + 5.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 5.0f) < 0.01f);
+    const auto ordinaryLowGate = werfeed::detectorEngageThresholdDb(
+        0.1f, werfeed::ProtectionPreset::speech, false, 0.0f, 100.0f);
+    const auto hotspotLowGate = werfeed::detectorEngageThresholdDb(
+        0.1f, werfeed::ProtectionPreset::speech, true, 1.5f, 100.0f);
+    const auto hotspotHighGate = werfeed::detectorEngageThresholdDb(
+        0.1f, werfeed::ProtectionPreset::speech, true, 1.5f, 4000.0f);
+    REQUIRE(hotspotLowGate < ordinaryLowGate);
+    REQUIRE(hotspotHighGate < hotspotLowGate);
+    REQUIRE(werfeed::detectorAmplitudeThresholdDb(0.1f, true, 4000.0f) <
+            werfeed::detectorAmplitudeThresholdDb(0.1f, true, 100.0f));
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.79f) == 420);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(0.8f) == 480);
     REQUIRE(werfeed::persistentRecurrenceWindowFrames(1.0f) == 520);
