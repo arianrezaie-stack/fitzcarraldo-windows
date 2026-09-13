@@ -117,7 +117,7 @@ const calibrationBiasCurve = (response: number[]) => {
 
 const detectorHotspotSensitivityLift = (measuredPeakBias: number) => {
   const measuredExcess = Math.max(0, Math.max(0, measuredPeakBias) / 1.25 + 2);
-  return clamp(measuredExcess / 16, 0.2, 0.5);
+  return clamp(measuredExcess / 32, 0.1, 0.25);
 };
 
 const detectorSensitivityAmount = (sensitivity: number, calibrationHotspot: boolean, measuredPeakBias: number) => {
@@ -232,19 +232,6 @@ function Spectrum({
       <div className="spectrum-axis">{spectrumTicks.map((tick, index) => <span key={tick.frequency} className={index === 0 ? 'first' : index === spectrumTicks.length - 1 ? 'last' : ''} style={{ left: `${frequencyPosition(tick.frequency)}%` }}>{tick.label}</span>)}</div>
       {hoverReadout && <div className={`spectrum-hover-readout ${hoverReadout.x > 120 ? 'align-left' : ''}`} style={{ left: hoverReadout.x, top: hoverReadout.y }} aria-hidden="true">{hoverReadout.frequency.toLocaleString('en-US')} Hz</div>}
     </div>
-    {visibleNotches.length > 0 && <div className="notch-inspector" aria-label="Adaptive notch estimates">
-      <div className="notch-inspector-heading"><span>Active notch estimates</span><small>depth and Q are live · hold and release are route estimates</small></div>
-      <div className="notch-inspector-grid">
-        {visibleNotches.map((notch) => {
-          const depthRatio = Math.max(0, Math.min(1, Math.abs(notch.depthDb) / 40));
-          return <div className="notch-card" key={`readout-${notch.frequency}-${notch.q}`}>
-            <div className="notch-card-heading"><strong>{notch.frequency.toLocaleString('en-US', { maximumFractionDigits: 0 })} Hz</strong><span>Q {notch.q.toFixed(1)}</span></div>
-            <div className="notch-depth-track" aria-label={`${Math.abs(notch.depthDb).toFixed(1)} decibel cut`}><i style={{ width: `${depthRatio * 100}%` }} /></div>
-            <div className="notch-card-metrics"><span>cut <strong>−{Math.abs(notch.depthDb).toFixed(1)} dB</strong></span><span>hold <strong>{holdMs ?? 0} ms</strong></span><span>release <strong>{releaseMs ?? 0} ms</strong></span></div>
-          </div>;
-        })}
-      </div>
-    </div>}
   </div>;
 }
 
@@ -258,7 +245,7 @@ function TraceChart({ raw = [], normalized = [], live = [] }: { raw?: number[]; 
   const rawPoints = toPoints(raw);
   const normalizedPoints = toPoints(normalized);
   const livePoints = toPoints(live);
-  const flatPoints = toPoints(normalized.length > 1 ? normalized.map(() => 0) : []);
+   const flatPoints = toPoints(normalized.length > 1 ? normalized.map(() => -3) : []);
   return <div className="trace-chart">
     <div className="trace-grid" />
     <div className="trace-y-axis"><span>+18</span><span>0</span><span>-24</span><span>-48 dB</span></div>
@@ -269,7 +256,7 @@ function TraceChart({ raw = [], normalized = [], live = [] }: { raw?: number[]; 
       {livePoints && <polyline className="trace-live" points={livePoints} />}
     </svg>
     <div className="trace-axis">{spectrumTicks.map((tick, index) => <span key={tick.frequency} className={index === 0 ? 'first' : index === spectrumTicks.length - 1 ? 'last' : ''} style={{ left: `${frequencyPosition(tick.frequency)}%` }}>{tick.label}</span>)}</div>
-    <div className="trace-legend"><span><i className="trace-key raw" /> original measured response</span><span><i className="trace-key normalized" /> normalized calibration response</span><span><i className="trace-key flat" /> flat reference · 0 dB</span><span><i className="trace-key live" /> current live spectrum</span></div>
+       <div className="trace-legend"><span><i className="trace-key raw" /> original measured response</span><span><i className="trace-key normalized" /> normalized calibration response</span><span><i className="trace-key flat" /> flat reference · −3 dB</span><span><i className="trace-key live" /> current live spectrum</span></div>
   </div>;
 }
 
@@ -278,7 +265,7 @@ function CalibrationDialog({ route, record, live, onClose }: { route: number; re
   return <div className="note-overlay" role="dialog" aria-modal="true" aria-labelledby="calibration-dialog-title">
     <div className="note-dialog calibration-dialog">
       <div className="dialog-heading"><div><div className="section-kicker"><BarChart3 size={14} /> route {route} measurement</div><h3 id="calibration-dialog-title">Calibration trace comparison</h3></div><button type="button" className="dialog-close" onClick={onClose} aria-label="Close calibration comparison"><X size={16} /></button></div>
-      <p>The copper trace is the original measured room and loudspeaker response. The white trace is the same curve after its broadband offset is applied. The thin line marks the 0 dB flat reference; the pale dashed trace is the current route spectrum.</p>
+       <p>The copper trace is the original measured room and loudspeaker response. The white trace is the same curve after its broadband offset is applied. The thin line marks the −3 dB flat reference; the pale dashed trace is the current route spectrum.</p>
       <TraceChart raw={record.rawResponseDb ?? record.responseDb} normalized={record.responseDb} live={live} />
       <div className="dialog-readout"><span>Measured delay</span><strong>{record.delayMs === undefined ? '—' : `${record.delayMs.toFixed(1)} ms`}</strong></div>
       <button type="button" onClick={onClose}>Close comparison</button>

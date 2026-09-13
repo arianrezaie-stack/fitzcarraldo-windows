@@ -387,13 +387,27 @@ int main() {
     REQUIRE(std::abs(werfeed::detectorSensitivityAmount(0.6f, false) - 0.6f) < 0.01f);
     REQUIRE(std::abs(werfeed::calibrationAmplitudeExcessDb(1.5f) - 3.2f) < 0.01f);
     REQUIRE(std::abs(werfeed::calibrationAmplitudeExcessDb(8.0f) - 8.4f) < 0.01f);
-    REQUIRE(std::abs(werfeed::detectorHotspotSensitivityLift(1.5f) - 0.2f) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorHotspotSensitivityLift(1.5f) - 0.1f) < 0.01f);
     REQUIRE(werfeed::detectorHotspotSensitivityLift(8.0f) >
             werfeed::detectorHotspotSensitivityLift(1.5f));
-    REQUIRE(std::abs(werfeed::detectorHotspotSensitivityLift(16.0f) - 0.5f) < 0.01f);
-    REQUIRE(std::abs(werfeed::detectorSensitivityAmount(0.6f, true, 1.5f) - 0.8f) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorHotspotSensitivityLift(16.0f) - 0.25f) < 0.01f);
+    REQUIRE(std::abs(werfeed::detectorSensitivityAmount(0.6f, true, 1.5f) - 0.7f) < 0.01f);
     REQUIRE(werfeed::detectorSensitivityAmount(0.6f, true, 8.0f) >
             werfeed::detectorSensitivityAmount(0.6f, true, 1.5f));
+    REQUIRE(werfeed::isDangerousFeedbackPeak(
+        true, -20.0f, -31.0f, 6.5f, 3, -30.0f));
+    REQUIRE(!werfeed::isDangerousFeedbackPeak(
+        true, -21.1f, -31.0f, 6.5f, 3, -30.0f));
+    REQUIRE(!werfeed::isDangerousFeedbackPeak(
+        true, -20.0f, -31.0f, 5.5f, 3, -30.0f));
+    REQUIRE(!werfeed::isDangerousFeedbackPeak(
+        true, -20.0f, -31.0f, 6.5f, 2, -30.0f));
+    REQUIRE(!werfeed::isDangerousFeedbackPeak(
+        true, -20.0f, -31.0f, 6.5f, 3, -32.0f));
+    REQUIRE(!werfeed::isDangerousFeedbackPeak(
+        false, -10.0f, -31.0f, 6.5f, 3, -30.0f));
+    REQUIRE(std::abs(werfeed::emergencySuppressionDepth(1.0f) -
+                     2.0f * werfeed::maximumSuppressionDepth(1.0f)) < 0.01f);
     const auto musicWeakHotspotGate = werfeed::detectorEngageThresholdDb(
         0.6f, werfeed::ProtectionPreset::music, true, 1.5f, 1000.0f);
     const auto musicStrongHotspotGate = werfeed::detectorEngageThresholdDb(
@@ -615,8 +629,29 @@ int main() {
     }
     REQUIRE(program->snapshot().activeNotches == 0);
 
-    // Speech may start its shallow probe on the first qualifying analysis
-    // frame, while Music waits for a longer stable peak.
+    // A rapidly accumulating peak bypasses probing and is allowed to use the
+    // emergency depth so a runaway loop is suppressed before it saturates.
+    auto runaway = std::make_unique<werfeed::FeedbackProcessor>();
+    runaway->prepare(rate);
+    runaway->clearBaseline();
+    runaway->setEnabled(true);
+    runaway->setSensitivityAmount(1.0f);
+    for (int i = 0; i < 96000; ++i) {
+        const auto rampSamples = std::max(0, i - 5000);
+        const auto amplitude = std::min(0.9f,
+            0.001f * std::exp(0.003f * static_cast<float>(rampSamples)));
+        processSample(*runaway, amplitude * std::sin(
+            2.0f * werfeed::pi * 1000.0f * i / 48000.0f));
+    }
+    const auto runawaySnapshot = runaway->snapshot();
+    REQUIRE(runawaySnapshot.activeNotches > 0);
+    REQUIRE(runawaySnapshot.maximumCutDb <
+            1.5f * werfeed::maximumSuppressionDepth(
+                runaway->getSuppressionAmount()));
+
+    // Both presets may start their shallow probe on the first qualifying
+    // analysis frame; Music becomes audible more gradually through attack
+    // smoothing rather than a detection delay.
     auto speechTiming = std::make_unique<werfeed::FeedbackProcessor>();
     speechTiming->prepare(rate);
     speechTiming->clearBaseline();

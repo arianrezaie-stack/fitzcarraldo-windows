@@ -255,6 +255,31 @@ inline float maximumSuppressionDepth(float amount) noexcept {
     return -baseDepth * (1.0f + maximumBoost);
 }
 
+inline float emergencySuppressionDepth(float amount) noexcept {
+    return maximumSuppressionDepth(amount) * 2.0f;
+}
+
+inline constexpr float dangerousFeedbackMarginDb() noexcept {
+    return 10.0f;
+}
+
+inline constexpr float dangerousFeedbackRiseDb() noexcept {
+    return 6.0f;
+}
+
+inline bool isDangerousFeedbackPeak(bool localPeak,
+                                    float levelDb,
+                                    float detectionFloorDb,
+                                    float levelDeltaDb,
+                                    int growthFrameCount,
+                                    float previousLevelDb) noexcept {
+    return localPeak &&
+        growthFrameCount >= 3 &&
+        levelDeltaDb >= dangerousFeedbackRiseDb() &&
+        previousLevelDb >= detectionFloorDb &&
+        levelDb >= detectionFloorDb + dangerousFeedbackMarginDb();
+}
+
 inline float feedbackAmplitudeThresholdDb(float sensitivity) noexcept {
     const auto clamped = std::clamp(sensitivity, 0.0f, 1.0f);
     return -70.0f * clamped;
@@ -268,13 +293,12 @@ inline float calibrationAmplitudeExcessDb(float measuredPeakBias) noexcept {
 }
 
 inline float detectorHotspotSensitivityLift(float measuredPeakBias) noexcept {
-    // A detected hotspot starts at the previous +0.2 lift (about a 3.2 dB
-    // measured excess). Stronger calibration peaks receive proportionally
-    // more sensitivity, capped at +0.5 so the detector remains controllable.
-    constexpr float sensitivityLiftPerDb = 1.0f / 16.0f;
+    // Keep calibrated hotspots meaningfully ahead of ordinary material while
+    // limiting the lift to half of the former accentuation.
+    constexpr float sensitivityLiftPerDb = 1.0f / 32.0f;
     return std::clamp(
         calibrationAmplitudeExcessDb(measuredPeakBias) * sensitivityLiftPerDb,
-        0.2f, 0.5f);
+        0.1f, 0.25f);
 }
 
 inline float detectorSensitivityAmount(float sensitivity,
@@ -714,6 +738,7 @@ private:
     struct ShadowNotch {
         float frequency = 0, q = 8, targetDepthDb = 0;
         bool calibrationHotspot = false;
+        bool emergency = false;
         bool persistent = false;
         bool manual = false;
         bool awaitingConfirmation = false;
@@ -836,7 +861,12 @@ private:
         std::array<std::size_t, maxNotches> candidateBins {};
         std::array<float, maxNotches> candidateScores {};
         std::array<float, maxNotches> candidateLevels {};
+        std::array<std::size_t, maxNotches> dangerousBins {};
+        std::array<float, maxNotches> dangerousScores {};
+        std::array<float, maxNotches> dangerousLevels {};
         candidateScores.fill(-std::numeric_limits<float>::infinity());
+        dangerousScores.fill(-std::numeric_limits<float>::infinity());
+        std::size_t dangerousCount = 0;
         // The overlapping hop makes three speech frames about 16 ms apart while
         // still requiring a stable, rising tonal peak rather than a single
         // voice or music bin.
@@ -855,7 +885,8 @@ private:
             const auto magnitude = 4.0f * std::hypot(fftReal[fftBin], fftImag[fftBin]) /
                                    static_cast<float>(fftSize);
             const auto level = 20.0f * std::log10(magnitude + 1.0e-9f);
-            const auto levelDelta = level - previousLevel[fftBin];
+            const auto previousLevelDb = previousLevel[fftBin];
+            const auto levelDelta = level - previousLevelDb;
             if (levelDelta > (selectedPreset == ProtectionPreset::speech ? 0.2f : 0.35f))
                 growthFrames[fftBin] = static_cast<unsigned char>(
                     std::min<int>(255, growthFrames[fftBin] + 1));
@@ -902,6 +933,28 @@ private:
             const auto rightMagnitude = 4.0f * std::hypot(fftReal[fftBin + 1], fftImag[fftBin + 1]) /
                                         static_cast<float>(fftSize);
             const auto localPeak = magnitude >= leftMagnitude && magnitude >= rightMagnitude;
+            const auto detectionFloorDb = std::max(
+                baseline[baselineBin].load(std::memory_order_relaxed) +
+                    calibratedEngageThreshold,
+                amplitudeThresholdDb);
+            if (isDangerousFeedbackPeak(
+                    localPeak, level, detectionFloorDb, levelDelta,
+                    growthFrames[fftBin], previousLevelDb)) {
+                const auto dangerScore = level - detectionFloorDb;
+                for (std::size_t slot = 0; slot < capacity; ++slot) {
+                    if (dangerScore <= dangerousScores[slot]) continue;
+                    for (std::size_t move = capacity - 1; move > slot; --move) {
+                        dangerousScores[move] = dangerousScores[move - 1];
+                        dangerousBins[move] = dangerousBins[move - 1];
+                        dangerousLevels[move] = dangerousLevels[move - 1];
+                    }
+                    dangerousScores[slot] = dangerScore;
+                    dangerousBins[slot] = fftBin;
+                    dangerousLevels[slot] = level;
+                    dangerousCount = std::min(capacity, dangerousCount + 1);
+                    break;
+                }
+            }
             const auto risingPeak = growthFrames[fftBin] >=
                 (selectedPreset == ProtectionPreset::speech ? 1 : 2);
             // Once a narrow peak clears the preset's lower baseline gate,
@@ -973,6 +1026,23 @@ private:
                 engageFrequency(candidateFrequency, calibrationHotspot,
                                 candidateLevels[candidateIndex]);
             }
+        }
+        for (std::size_t dangerousIndex = 0;
+             dangerousIndex < dangerousCount; ++dangerousIndex) {
+            const auto dangerousBin = dangerousBins[dangerousIndex];
+            const auto dangerousFrequency =
+                static_cast<float>(dangerousBin * sampleRate / fftSize);
+            const auto dangerousLogPosition =
+                std::log10(dangerousFrequency / 20.0f) / std::log10(1000.0f);
+            const auto dangerousBaselineBin = std::clamp<std::size_t>(
+                static_cast<std::size_t>(std::lround(
+                    dangerousLogPosition * (analyzerBins - 1))),
+                0, analyzerBins - 1);
+            const auto dangerousHotspot =
+                calibrationPeakBias[dangerousBaselineBin].load(
+                    std::memory_order_relaxed) >= 1.5f;
+            engageFrequency(dangerousFrequency, dangerousHotspot,
+                            dangerousLevels[dangerousIndex], true);
         }
         consolidateCoupledNotches(capacity);
         for (std::size_t i = 0; i < capacity; ++i) {
@@ -1149,6 +1219,7 @@ private:
             float totalWeight = 0.0f;
             float deepestDepth = 0.0f;
             bool calibrationHotspot = false;
+            bool emergency = false;
             bool persistent = false;
             int releaseHoldFrames = 0;
             for (std::size_t position = groupStart; position < groupEnd; ++position) {
@@ -1162,12 +1233,15 @@ private:
                     survivor = index;
                 }
                 calibrationHotspot = calibrationHotspot || notch.calibrationHotspot;
+                emergency = emergency || notch.emergency;
                 persistent = persistent || notch.persistent;
                 releaseHoldFrames = std::max(releaseHoldFrames, notch.releaseHoldFrames);
             }
             const auto centerFrequency = std::exp(weightedLogFrequency /
                 std::max(1.0f, totalWeight));
-            const auto maximumDepth = maximumSuppressionDepth(getDepthAmount());
+            const auto depthLimit = emergency
+                ? emergencySuppressionDepth(getDepthAmount())
+                : maximumSuppressionDepth(getDepthAmount());
             const auto addedDepth = std::min(3.0f,
                 1.0f + 0.75f * static_cast<float>(groupSize - 2));
             auto& merged = analysisNotches[survivor];
@@ -1175,8 +1249,9 @@ private:
             merged.q = std::max(4.0f, notchQualityForCalibrationHotspot(
                 centerFrequency, preset.load(std::memory_order_relaxed),
                 calibrationHotspot) / (1.0f + 0.25f * static_cast<float>(groupSize - 1)));
-            merged.targetDepthDb = std::max(maximumDepth, deepestDepth - addedDepth);
+            merged.targetDepthDb = std::max(depthLimit, deepestDepth - addedDepth);
             merged.calibrationHotspot = calibrationHotspot;
+            merged.emergency = emergency;
             merged.persistent = persistent;
             merged.releaseHoldFrames = releaseHoldFrames;
             merged.quietFrames = 0;
@@ -1191,7 +1266,7 @@ private:
         }
     }
     void engageFrequency(float frequency, bool calibrationHotspot,
-                         float levelDb) noexcept {
+                         float levelDb, bool emergency = false) noexcept {
         const auto capacity = getNotchCapacity();
         if (capacity == 0) return;
         const auto candidateBin = std::clamp<std::size_t>(
@@ -1230,9 +1305,31 @@ private:
                     foundWeakest = true;
                 }
             }
-            if (!foundWeakest) return;
-            selected = &analysisNotches[weakest];
+            if (foundWeakest)
+                selected = &analysisNotches[weakest];
         }
+        if (!selected && emergency) {
+            std::size_t weakest = 0;
+            float weakestDepth = -std::numeric_limits<float>::infinity();
+            bool foundWeakest = false;
+            for (std::size_t i = 0; i < capacity; ++i) {
+                const auto& notch = analysisNotches[i];
+                if (notch.manual || notch.frequency <= 0.0f) continue;
+                const auto effectiveDepth = std::max(
+                    notch.targetDepthDb,
+                    publishedDepth[i].load(std::memory_order_relaxed));
+                if (!foundWeakest || effectiveDepth > weakestDepth) {
+                    weakest = i;
+                    weakestDepth = effectiveDepth;
+                    foundWeakest = true;
+                }
+            }
+            if (foundWeakest) {
+                selected = &analysisNotches[weakest];
+                selected->persistent = false;
+            }
+        }
+        if (!selected) return;
         const auto selectedIndex = static_cast<std::size_t>(selected - analysisNotches.data());
         const auto quietFramesBeforeEngagement = selected->quietFrames;
         notchSeen[selectedIndex] = true;
@@ -1244,10 +1341,23 @@ private:
             && std::abs(std::log2(selected->frequency / frequency)) < 0.08f;
         const auto wasRecurrence = wasSameFrequency && quietFramesBeforeEngagement >= 3;
         const auto maximumDepth = maximumSuppressionDepth(amount);
+        const auto targetDepth = emergency
+            ? emergencySuppressionDepth(amount) : maximumDepth;
         const auto centerBin = candidateBin;
         // A pending probe owns the slot until its quick reassessment decides
         // whether it is acoustic feedback. Do not keep restarting the probe
         // merely because the shallow notch still leaves a detectable peak.
+        if (wasSameFrequency && emergency) {
+            selected->calibrationHotspot =
+                selected->calibrationHotspot || calibrationHotspot;
+            selected->emergency = true;
+            selected->persistent = false;
+            selected->awaitingConfirmation = false;
+            selected->probeFrames = 0;
+            selected->probeDepthDb = targetDepth;
+            selected->targetDepthDb = targetDepth;
+            return;
+        }
         if (wasSameFrequency && selected->awaitingConfirmation) {
             selected->calibrationHotspot =
                 selected->calibrationHotspot || calibrationHotspot;
@@ -1270,7 +1380,8 @@ private:
              selected->targetDepthDb < -0.1f)) {
             selected->calibrationHotspot =
                 selected->calibrationHotspot || calibrationHotspot;
-            selected->targetDepthDb = maximumDepth;
+            selected->targetDepthDb = selected->emergency
+                ? emergencySuppressionDepth(amount) : maximumDepth;
             return;
         }
         const auto leftMagnitude = std::max(1.0e-12f,
@@ -1290,6 +1401,7 @@ private:
             : 0.0f;
         selected->calibrationHotspot =
             calibrationHotspot;
+        selected->emergency = emergency;
         selected->persistent = false;
         selected->manual = false;
         selected->frequency = std::clamp(static_cast<float>(
@@ -1304,14 +1416,16 @@ private:
         // A calibrated hotspot has already been identified during measurement,
         // so it receives the full slider-defined target immediately. Other
         // candidates use the shallower probe and raw-source reassessment.
-        selected->probeDepthDb = maximumDepth *
-            probeDepthFraction(selected->frequency);
+        selected->probeDepthDb = emergency
+            ? targetDepth
+            : maximumDepth * probeDepthFraction(selected->frequency);
         selected->releaseHoldFrames = static_cast<int>(std::lround(
             10.0f + 50.0f * timing +
             (calibrationHotspot ? 24.0f + 48.0f * timing : 0.0f)));
-        selected->awaitingConfirmation = !calibrationHotspot;
-        selected->targetDepthDb = calibrationHotspot
-            ? maximumDepth : selected->probeDepthDb;
+        selected->awaitingConfirmation = emergency ? false : !calibrationHotspot;
+        selected->targetDepthDb = emergency
+            ? targetDepth
+            : (calibrationHotspot ? maximumDepth : selected->probeDepthDb);
         if (calibrationHotspot)
             selected->probeDepthDb = maximumDepth;
     }
