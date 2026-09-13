@@ -358,6 +358,15 @@ inline float detectorAmplitudeThresholdDb(float sensitivity,
         detectorFrequencyThresholdAdjustmentDb(frequency, preset);
 }
 
+inline int detectionPersistenceFrames(ProtectionPreset preset,
+                                      float frequency) noexcept {
+    if (preset == ProtectionPreset::speech) return 1;
+    // Music starts a little more deliberately so sustained program material
+    // does not make the first cut feel abrupt; the existing raw-source
+    // confirmation still follows after this persistence gate.
+    return frequency > 1000.0f ? 40 : 56;
+}
+
 inline std::size_t persistentNotchLimit(std::size_t capacity, float amount) noexcept {
     const auto clamped = std::clamp(amount, 0.0f, 1.0f);
     return std::min(capacity, static_cast<std::size_t>(
@@ -899,11 +908,8 @@ private:
                 (risingPeak || stableStrongPeak)) {
                 persistence[fftBin] = static_cast<unsigned char>(
                     std::min<int>(255, persistence[fftBin] + 1));
-                const auto requiredFrames = selectedPreset == ProtectionPreset::speech
-                    // Music waits for a longer, more convincing narrow peak
-                    // before even starting the shallow confirmation cut.
-                    // Speech keeps the existing fastest possible response.
-                    ? 1 : (frequency > 1000.0f ? 32 : 48);
+                const auto requiredFrames = detectionPersistenceFrames(
+                    selectedPreset, frequency);
                 if (persistence[fftBin] < requiredFrames) continue;
                 const auto score = excess + tonal;
                 for (std::size_t slot = 0; slot < capacity; ++slot) {

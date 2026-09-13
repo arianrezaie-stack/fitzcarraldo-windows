@@ -978,7 +978,7 @@ int main() {
         auto* hello = new juce::DynamicObject();
         hello->setProperty("type", "hello");
         hello->setProperty("protocolVersion", 1);
-        hello->setProperty("engineVersion", "0.1.7");
+        hello->setProperty("engineVersion", "0.1.8");
         emit(juce::var(hello));
     }
     std::atomic_bool done { false };

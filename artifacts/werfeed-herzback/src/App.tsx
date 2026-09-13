@@ -350,7 +350,7 @@ function AudioMappingPanel({
 
 function Home() {
   const bridge = typeof window !== 'undefined' ? window.werfeedDesktop?.engine : undefined;
-  const [engineStatus, setEngineStatus] = useState<EngineStatus>(bridge ? { state: 'connecting' } : { state: 'unavailable', reason: 'Electron preload bridge is not present.' });
+  const [engineStatus, setEngineStatus] = useState<EngineStatus>(bridge ? { state: 'connecting' } : { state: 'unavailable' });
   const [devices, setDevices] = useState<Device[]>([]);
   const [devicesReported, setDevicesReported] = useState(false);
   const [audioState, setAudioState] = useState<AudioState>({});
@@ -908,7 +908,7 @@ function Home() {
     {message && <div className="toast" role="status"><AlertTriangle size={14} /> {message}</div>}
     {restartingAudio && <div className="app-restart-lock" role="alert" aria-live="assertive" aria-busy="true"><RefreshCw size={20} /><strong>Restarting engine</strong><span>The interface is locked until the engine is ready.</span></div>}
     <header className="app-header">
-       <div className="brand-lockup"><div className="brand-mark" aria-label="Werfeed Herzback logo"><svg className="brand-symbol" viewBox="0 0 32 32" role="img" aria-hidden="true"><path className="brand-triangle" d="M16 3.5 29 27.5H3Z" /><path className="brand-eye" d="M8.5 15.5s2.8-4 7.5-4 7.5 4 7.5 4-2.8 4-7.5 4-7.5-4-7.5-4Z" /><circle className="brand-pupil" cx="16" cy="15.5" r="2.15" /></svg></div><div><div className="eyebrow">Arian Rezaie's Adaptive Feedback Control</div><h1 className="brand-title">Werfeed Herzback <span className="brand-byline">· by Arian Rezaie</span> <small className="brand-version">v{packageJson.version}</small></h1></div></div>
+       <div className="brand-lockup"><div className="brand-mark" aria-label="Fitzcarraldo logo"><svg className="brand-symbol" viewBox="0 0 32 32" role="img" aria-hidden="true"><path className="brand-triangle" d="M16 3.5 29 27.5H3Z" /><path className="brand-eye" d="M8.5 15.5s2.8-4 7.5-4 7.5 4 7.5 4-2.8 4-7.5 4-7.5-4-7.5-4Z" /><circle className="brand-pupil" cx="16" cy="15.5" r="2.15" /></svg></div><div><div className="eyebrow">Arian Rezaie's Adaptive Feedback Control</div><h1 className="brand-title">Fitzcarraldo <span className="brand-byline">· by Arian Rezaie</span> <small className="brand-version">v{packageJson.version}</small></h1></div></div>
       <div className="header-meta">
         <Badge tone={nativeReady ? 'green' : 'red'}><span className="route-dot" /> {bridge ? `Engine ${engineStatus.state}` : 'Native engine unavailable'}</Badge>
         <span className="session">{engineStatus.reason ?? 'Native engine status'}</span>
