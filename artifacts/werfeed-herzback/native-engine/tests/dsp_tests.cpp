@@ -439,8 +439,10 @@ int main() {
     REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(1500.0f)) < 0.01f);
     REQUIRE(werfeed::frequencyThresholdAdjustmentDb(4000.0f) <
             werfeed::frequencyThresholdAdjustmentDb(1500.0f));
-    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(8000.0f) + 18.0f) < 0.01f);
-    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 18.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(
+                         std::sqrt(1500.0f * 8000.0f)) + 15.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(8000.0f) + 30.0f) < 0.01f);
+    REQUIRE(std::abs(werfeed::frequencyThresholdAdjustmentDb(20000.0f) + 30.0f) < 0.01f);
     REQUIRE(std::abs(werfeed::detectorFrequencyThresholdAdjustmentDb(
                         20.0f, werfeed::ProtectionPreset::music)) < 0.01f);
     REQUIRE(std::abs(werfeed::detectorFrequencyThresholdAdjustmentDb(

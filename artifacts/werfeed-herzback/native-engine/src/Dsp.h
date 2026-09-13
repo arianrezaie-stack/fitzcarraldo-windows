@@ -315,7 +315,7 @@ inline float frequencyThresholdAdjustmentDb(float frequency) noexcept {
     // neutral through the mid band, and more responsive to narrower
     // high-frequency feedback modes.
     constexpr float lowAdjustmentDb = 10.0f;
-    constexpr float highAdjustmentDb = -18.0f;
+    constexpr float highAdjustmentDb = -30.0f;
     constexpr float lowStartHz = 20.0f;
     constexpr float lowShelfEndHz = 150.0f;
     constexpr float lowEndHz = 500.0f;
