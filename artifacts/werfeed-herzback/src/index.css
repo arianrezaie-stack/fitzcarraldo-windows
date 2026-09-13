@@ -306,11 +306,12 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .spectrum-label { position: absolute; top: 10px; left: 12px; color: #a88b70; font-size: 8px; letter-spacing: .15em; text-transform: uppercase; }
 .spectrum svg { position: absolute; inset: 28px 13px 28px; width: calc(100% - 26px); height: calc(100% - 56px); }
 .spectrum-trace { fill: none; stroke: #e1bd83; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.spectrum-detection-curve { fill: none; stroke: #d09a63; stroke-width: 1.4; stroke-dasharray: 3 3; opacity: .38; vector-effect: non-scaling-stroke; }
 .spectrum-plot-overlay { position: absolute; inset: 28px 13px; pointer-events: none; }
 .notch-band { position: absolute; bottom: 0; border: 1px solid rgba(223, 151, 92, .34); border-bottom: 0; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, rgba(204, 113, 71, .04), rgba(204, 113, 71, .24)); }
 .notch-marker { position: absolute; top: 0; bottom: 0; left: 50%; border-left: 1px dashed #e0a06d; pointer-events: none; }
 .spectrum-legend { position: absolute; bottom: 28px; left: 13px; display: flex; flex-wrap: wrap; gap: 12px; color: #c3a276; font-size: 8px; }
-.spectrum-legend span { display: flex; align-items: center; gap: 6px; }.legend-line { width: 18px; height: 1px; background: #e1bd83; }.legend-cut { height: 11px; border-left: 1px dashed #d29261; }
+.spectrum-legend span { display: flex; align-items: center; gap: 6px; }.legend-line { width: 18px; height: 1px; background: #e1bd83; }.legend-detection { width: 18px; height: 0; border-top: 1px dashed rgba(208, 154, 99, .62); }.legend-cut { height: 11px; border-left: 1px dashed #d29261; }
 .spectrum-axis { position: absolute; bottom: 8px; left: 13px; right: 13px; height: 10px; color: #9b7c63; font: 8px var(--app-font-mono); }
 .spectrum-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .spectrum-axis span.first { transform: none; }

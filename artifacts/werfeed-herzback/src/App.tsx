@@ -76,16 +76,111 @@ const notchBandWidth = (frequency: number, q: number) => {
   return Math.max(0.35, frequencyPosition(right) - frequencyPosition(left));
 };
 
+const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
+
+const legacySuppressionAmount = (amount: number) => {
+  const clamped = clamp(amount, 0, 1);
+  return clamped <= 0.7 ? clamped : Math.min(1, 0.7 + (clamped - 0.7) * 3);
+};
+
+const frequencyThresholdAdjustmentDb = (frequency: number) => {
+  if (frequency <= 20) return 5;
+  if (frequency < 350) {
+    const position = Math.log(frequency / 20) / Math.log(350 / 20);
+    return 5 * (1 - position);
+  }
+  if (frequency <= 1500) return 0;
+  if (frequency < 4000) {
+    const position = Math.log(frequency / 1500) / Math.log(4000 / 1500);
+    return -5 * position;
+  }
+  return -5;
+};
+
+const calibrationBiasCurve = (response: number[]) => {
+  if (response.length < 2 || response.some((value) => !Number.isFinite(value))) return [];
+  const sorted = [...response].sort((left, right) => left - right);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const bias = Array.from({ length: response.length }, () => 0);
+  response.forEach((value, index) => {
+    const peakAboveMedian = Math.max(0, value - median - 2);
+    const centerBias = Math.min(16, peakAboveMedian * 1.25);
+    bias[index] = Math.max(bias[index], centerBias);
+    if (index > 0) bias[index - 1] = Math.max(bias[index - 1], centerBias * 0.7);
+    if (index + 1 < bias.length) bias[index + 1] = Math.max(bias[index + 1], centerBias * 0.7);
+    if (index > 1) bias[index - 2] = Math.max(bias[index - 2], centerBias * 0.35);
+    if (index + 2 < bias.length) bias[index + 2] = Math.max(bias[index + 2], centerBias * 0.35);
+  });
+  return bias;
+};
+
+const detectorHotspotSensitivityLift = (measuredPeakBias: number) => {
+  const measuredExcess = Math.max(0, Math.max(0, measuredPeakBias) / 1.25 + 2);
+  return clamp(measuredExcess / 16, 0.2, 0.5);
+};
+
+const detectorSensitivityAmount = (sensitivity: number, calibrationHotspot: boolean, measuredPeakBias: number) => {
+  const clamped = clamp(sensitivity, 0, 1);
+  return calibrationHotspot
+    ? Math.min(1, clamped + detectorHotspotSensitivityLift(measuredPeakBias))
+    : clamped;
+};
+
+const detectorCurveValues = (
+  sensitivity: number,
+  preset: 'speech' | 'music',
+  calibrationResponse: number[],
+) => {
+  const biasCurve = calibrationBiasCurve(calibrationResponse);
+  const pointCount = Math.max(2, calibrationResponse.length || 256);
+  return Array.from({ length: pointCount }, (_, index) => {
+    const position = index / (pointCount - 1);
+    const frequency = 20 * Math.pow(1000, position);
+    const measuredPeakBias = biasCurve[index] ?? 0;
+    const calibrationHotspot = measuredPeakBias >= 1.5;
+    const candidateSensitivity = detectorSensitivityAmount(
+      sensitivity,
+      calibrationHotspot,
+      measuredPeakBias,
+    );
+    const candidateLegacyAmount = legacySuppressionAmount(candidateSensitivity);
+    const candidateExtraSensitivity = clamp((candidateSensitivity - 0.8) / 0.2, 0, 1);
+    const candidateSpeechCore = Math.min(1, candidateLegacyAmount / 0.7);
+    const candidateSpeechExtension = clamp((candidateLegacyAmount - 0.7) / 0.3, 0, 1);
+    const engageAboveBaseline = preset === 'speech'
+      ? 9 - 5.5 * candidateSpeechCore - 3.5 * candidateSpeechExtension - 3 * candidateExtraSensitivity
+      : 9 - 1.5 * candidateLegacyAmount - 3 * candidateExtraSensitivity;
+    const frequencyAdjustment = frequencyThresholdAdjustmentDb(frequency);
+    const engageThreshold = Math.max(
+      0.25,
+      engageAboveBaseline + frequencyAdjustment
+        - (calibrationHotspot ? Math.min(5, Math.max(0, measuredPeakBias) * 0.65) : 0),
+    );
+    const baseline = -55 - measuredPeakBias;
+    const absoluteAmplitudeThreshold = -70 * candidateSensitivity + frequencyAdjustment;
+    // A candidate must clear both the baseline-relative engage gate and the
+    // absolute amplitude gate. Plot the higher of those two exact native
+    // thresholds against the live absolute FFT spectrum.
+    return Math.max(baseline + engageThreshold, absoluteAmplitudeThreshold);
+  });
+};
+
 function Spectrum({
   values = [],
   notches = [],
   holdMs,
   releaseMs,
+  sensitivity = 0.75,
+  preset = 'speech',
+  calibrationResponse = [],
 }: {
   values?: number[];
   notches?: Notch[];
   holdMs?: number;
   releaseMs?: number;
+  sensitivity?: number;
+  preset?: 'speech' | 'music';
+  calibrationResponse?: number[];
 }) {
   const [hoverReadout, setHoverReadout] = useState<{ x: number; y: number; frequency: number } | null>(null);
   const visibleNotches = notches.filter((notch) =>
@@ -103,10 +198,16 @@ function Spectrum({
     const y = Math.max(0, Math.min(100, (0 - value) / 100 * 100));
     return `${x},${y}`;
   }).join(' ') : '';
+  const detectionCurvePoints = detectorCurveValues(sensitivity, preset, calibrationResponse).map((value, index, curve) => {
+    const x = index / (curve.length - 1) * 100;
+    const y = Math.max(0, Math.min(100, (0 - value) / 100 * 100));
+    return `${x},${y}`;
+  }).join(' ');
   return <div className="spectrum-stack">
     <div className="spectrum" data-testid="analyzer-spectrum" onMouseMove={updateHover} onMouseLeave={() => setHoverReadout(null)}>
       <div className="spectrum-grid" />
-      <div className="spectrum-label">{points ? 'Live 256-bin detector · baseline-relative protection' : 'Awaiting native analyzer data'}</div>
+      <div className="spectrum-label">{points ? 'Live 256-bin detector · native detection floor shown' : 'Awaiting native analyzer data · detection floor shown'}</div>
+      {detectionCurvePoints && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Native detection floor and live spectrum"><title>Exact native detection floor, including sensitivity, frequency shaping, and calibration hotspot bias</title><polyline className="spectrum-detection-curve" points={detectionCurvePoints} /></svg>}
       {points && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Live spectrum"><polyline className="spectrum-trace" points={points} /></svg>}
       <div className="spectrum-plot-overlay" aria-hidden="true">
         {visibleNotches.map((notch) => {
@@ -126,7 +227,7 @@ function Spectrum({
           </div>;
         })}
       </div>
-      <div className="spectrum-legend"><span><i className="legend-line" /> live spectrum</span><span><i className="legend-cut" /> {visibleNotches.length} adaptive cuts</span></div>
+      <div className="spectrum-legend"><span><i className="legend-line" /> live spectrum</span><span><i className="legend-detection" /> native detection floor</span><span><i className="legend-cut" /> {visibleNotches.length} adaptive cuts</span></div>
       <div className="spectrum-axis">{spectrumTicks.map((tick, index) => <span key={tick.frequency} className={index === 0 ? 'first' : index === spectrumTicks.length - 1 ? 'last' : ''} style={{ left: `${frequencyPosition(tick.frequency)}%` }}>{tick.label}</span>)}</div>
       {hoverReadout && <div className={`spectrum-hover-readout ${hoverReadout.x > 120 ? 'align-left' : ''}`} style={{ left: hoverReadout.x, top: hoverReadout.y }} aria-hidden="true">{hoverReadout.frequency.toLocaleString('en-US')} Hz</div>}
     </div>
@@ -824,7 +925,7 @@ function Home() {
          <div className="calibration-controls"><label className="mapping-field"><span>Calibration route</span><select value={activeRoute} disabled={!nativeReady || !audioRunning || telemetry.calibrating} onChange={(event) => setActiveRoute(Number(event.target.value))}>{routes.map((route) => <option key={route.id} value={route.id - 1}>Route {route.id}{!route.enabled ? ' · standby' : ''}</option>)}</select></label><button type="button" className="plain-button footer-bypass" disabled={!nativeReady || !audioRunning || telemetry.calibrating || !activeRouteMapped} onClick={calibrate}><CircleHelp size={14} /> {telemetry.calibrating ? 'Calibrating…' : !activeRouteState.enabled ? `Arm & calibrate Route ${activeRoute + 1}` : `Calibrate Route ${activeRoute + 1}`}</button><button type="button" className="plain-button calibration-reset-button" disabled={!nativeReady || !activeCalibration || telemetry.calibrating} onClick={resetCalibration}><RotateCcw size={14} /> Reset Route {activeRoute + 1}</button><button type="button" className="calibration-trace-button" disabled={!activeCalibration || !nativeReady} onClick={() => setShowCalibration(true)} aria-label={`View Route ${activeRoute + 1} calibration measurement`} title={activeCalibration ? `View Route ${activeRoute + 1} measurement` : 'Calibrate this route to view its measurement'}><MoreHorizontal size={17} /></button></div>
       </section>
        <section className="route-focus-stack">
-             <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector uses a virtual flat reference until calibration adds measured room weighting. Armed routes share 32 adaptive notch slots; disarmed routes return their share to the remaining routes.</p></div><span className="slot-count">{activeNotchCount} / {activeNotchCapacity} cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} holdMs={timingHoldMs} releaseMs={timingReleaseMs} />{recurringCutAlert?.route === activeRoute + 1 && <div className="recurring-cut-alert" role="status" aria-live="polite"><span>Consider manual cuts at <strong>{recurringCutAlert.frequencies.map((frequency) => `${frequency.toLocaleString('en-US', { maximumFractionDigits: 0 })} Hz`).join(', ')}</strong>.</span></div>}</section>
+              <section className="panel route-analyzer-panel"><div className="panel-heading"><div><div className="section-kicker"><Radio size={14} /> route {activeRoute + 1} analyzer</div><h3 className="section-title">Live spectrum and adaptive cuts</h3><p className="section-note">The detector uses a virtual flat reference until calibration adds measured room weighting. The pale curve is the exact native detection floor, including bass/treble shaping, the sensitivity slider, and calibrated hotspot bias.</p></div><span className="slot-count">{activeNotchCount} / {activeNotchCapacity} cuts</span></div><Spectrum values={activeSpectrum} notches={activeNotches} holdMs={timingHoldMs} releaseMs={timingReleaseMs} sensitivity={activeSensitivity} preset={preset} calibrationResponse={activeCalibration?.responseDb ?? []} />{recurringCutAlert?.route === activeRoute + 1 && <div className="recurring-cut-alert" role="status" aria-live="polite"><span>Consider manual cuts at <strong>{recurringCutAlert.frequencies.map((frequency) => `${frequency.toLocaleString('en-US', { maximumFractionDigits: 0 })} Hz`).join(', ')}</strong>.</span></div>}</section>
          <section className={`panel route-protection-panel ${protectionActive ? '' : 'is-bypassed'}`}><div className="panel-heading"><div><div className="section-kicker"><SlidersHorizontal size={14} /> route {activeRoute + 1} protection</div><h3 className="section-title">{protectionActive ? 'Suppression armed' : 'Suppression bypassed'}</h3><p className="section-note">Depth controls cut strength. Sensitivity follows a shaped curve: about +5 dB on 20–350 Hz, flat through the mids, then down to about −5 dB from 1.5–4 kHz onward. Measured hotspots skip probing and suppress at full depth immediately.</p></div><Badge tone={protectionActive ? 'green' : 'red'}>{protectionActive ? 'armed' : 'bypassed'}</Badge></div><div className="mode-switch"><button type="button" className={preset === 'speech' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'speech')}><Mic2 size={13} /> Speech</button><button type="button" className={preset === 'music' ? 'active' : ''} disabled={!nativeReady} onClick={() => setProtection(protectionActive, 'music')}><Waves size={13} /> Music</button></div><div className="protection-slider-stack"><div className="route-fader"><div className="fader-copy"><div className="curve-name"><TimerReset size={14} /> Timing <span className="slider-readout">{timingReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeTiming * 100)} disabled={!nativeReady} onChange={(event) => setTiming(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} notch timing`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeTiming * 100)}%, #4a3025 ${Math.round(activeTiming * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><LockKeyhole size={14} /> Latch <span className="slider-readout">{latchReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeLatch * 100)} disabled={!nativeReady} onChange={(event) => setLatch(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} notch latch`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeLatch * 100)}%, #4a3025 ${Math.round(activeLatch * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><SlidersHorizontal size={14} /> Depth <span className="slider-readout">{depthReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeDepth * 100)} disabled={!nativeReady} onChange={(event) => setDepth(Number(event.target.value) / 100)} aria-label={`Route ${activeRoute + 1} cut depth`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeDepth * 100)}%, #4a3025 ${Math.round(activeDepth * 100)}%, #4a3025 100%)` }} /></div></div><div className="route-fader"><div className="fader-copy"><div className="curve-name"><Radio size={14} /> Sensitivity <span className="slider-readout">{sensitivityReadout}</span></div></div><div className="fader-control"><input className="suppression-slider" type="range" min="0" max="100" step="1" value={Math.round(activeSensitivity * 100)} disabled={!nativeReady} onChange={(event) => setSensitivity(Number(event.target.value) / 100)} onPointerUp={flushSensitivityCommand} onKeyUp={flushSensitivityCommand} aria-label={`Route ${activeRoute + 1} feedback sensitivity`} style={{ background: `linear-gradient(90deg, #d19a63 0%, #d19a63 ${Math.round(activeSensitivity * 100)}%, #4a3025 ${Math.round(activeSensitivity * 100)}%, #4a3025 100%)` }} /></div></div></div></section>
        <section className="panel telemetry-panel">
         <div className="panel-heading"><div><div className="section-kicker"><Gauge size={14} /> live readings</div><h3 className="section-title">Engine and signal health</h3><p className="section-note">Telemetry stays visible below the control sections so live operation can be monitored without moving the routing controls.</p></div><Badge tone={audioRunning ? 'green' : 'quiet'}>{audioRunning ? 'audio running' : nativeReady ? 'engine connected' : 'waiting for engine'}</Badge></div>
