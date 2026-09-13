@@ -295,7 +295,7 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .curve-name svg { color: #d09a63; }
 .control-strip { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 11px; }
 .select-label { display: flex; align-items: center; gap: 6px; color: #b08e72; font-size: 8px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-.select-label select { border: 1px solid #684839; border-radius: 5px; padding: 6px 7px; color: #dfcdb3; background: #251712; font: 9px var(--app-font-mono); letter-spacing: 0; outline: none; }
+.select-label select { border: 1px solid #765039; border-radius: 6px; padding: 6px 28px 6px 9px; color: #eadbc2; background: #2b1c15; font: 9px var(--app-font-mono); letter-spacing: 0; outline: none; }
 .dial { display: flex; align-items: center; gap: 7px; }
 .dial-knob { position: relative; width: 32px; height: 32px; border: 1px solid #765a48; border-radius: 50%; background: #241913; box-shadow: inset 0 2px 6px #120c09; }
 .dial-knob::before { content: ""; position: absolute; top: 2px; left: 50%; width: 1px; height: 10px; background: var(--copper); transform: translateX(-50%) rotate(34deg); transform-origin: 50% 14px; }
@@ -340,8 +340,8 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .cut-main { display: flex; align-items: center; justify-content: space-between; gap: 7px; }.cut-frequency { display: flex; align-items: center; gap: 7px; color: #eadbc5; font: 11px var(--app-font-mono); }.cut-dot { width: 7px; height: 7px; border-radius: 50%; }.cut-depth { color: #d1b38c; font: 10px var(--app-font-mono); }.cut-release { border: 0; padding: 0; color: #a8886d; background: transparent; }.cut-release:hover { color: #e0a36c; }
 .cut-meta { display: flex; justify-content: space-between; margin-top: 7px; color: #a98a70; font-size: 8px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }.cut-meta strong { color: #c4a278; }.cut-meta strong.rising { color: #d3975f; }
 .armed-line { display: flex; align-items: center; gap: 6px; margin-top: 14px; color: #d29a61; font-size: 9px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
-.route-pair-field select, .route-bus-grid select, .detail-row select { min-width: 0; border: 1px solid #b9b9b9; border-radius: 5px; padding: 7px 8px; color: #15110e; background: #fff; font: 10px var(--app-font-mono); }
-.route-pair-field select option, .route-bus-grid select option, .detail-row select option { color: #15110e; background: #fff; }
+.route-pair-field select, .route-bus-grid select, .detail-row select { min-width: 0; border: 1px solid #765039; border-radius: 6px; padding: 7px 28px 7px 9px; color: #eadbc2; background: #2b1c15; font: 10px var(--app-font-mono); }
+.route-pair-field select option, .route-bus-grid select option, .detail-row select option { color: #eadbc2; background: #2b1c15; }
 .device-name { display: block; font-size: 11px; font-weight: 700; }.device-detail { display: block; margin-top: 4px; color: #a9886d; font: 9px var(--app-font-mono); }
 .route-pair-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: #a98a70; font-size: 8px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .route-pair-field select { width: 58%; }
@@ -352,8 +352,34 @@ button:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
 .audio-mapping-panel { min-width: 0; }
 .mapping-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
 .mapping-field { display: flex; flex-direction: column; gap: 6px; color: #b18f73; font-size: 9px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
-.mapping-field select { width: 100%; min-width: 0; border: 1px solid #b9b9b9; border-radius: 5px; padding: 9px 8px; color: #15110e; background: #fff; font: 10px var(--app-font-mono); letter-spacing: 0; }
-.mapping-field select option { color: #15110e; background: #fff; }
+.mapping-field select { width: 100%; min-width: 0; border: 1px solid #765039; border-radius: 6px; padding: 9px 28px 9px 9px; color: #eadbc2; background: #2b1c15; font: 10px var(--app-font-mono); letter-spacing: 0; }
+.mapping-field select option { color: #eadbc2; background: #2b1c15; }
+.select-label select, .route-pair-field select, .route-bus-grid select, .detail-row select, .mapping-field select {
+  appearance: none;
+  color-scheme: dark;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #d19a63 50%),
+    linear-gradient(135deg, #d19a63 50%, transparent 50%);
+  background-position:
+    calc(100% - 13px) 50%,
+    calc(100% - 8px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+  box-shadow: inset 0 1px 0 rgba(236, 194, 139, .06), 0 3px 10px rgba(12, 7, 4, .12);
+  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease, color .16s ease;
+}
+select:hover:not(:disabled) {
+  border-color: #b77c4f;
+  color: #f2d7ad;
+  background-color: #3a241a;
+}
+select:focus-visible {
+  border-color: #d19a63;
+  color: #f2d7ad;
+  outline: 2px solid rgba(225, 170, 108, .24);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px rgba(201, 139, 87, .18), 0 4px 14px rgba(12, 7, 4, .18);
+}
 .route-mapping-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 12px; }
 .route-mapping-summary div { min-width: 0; border: 1px solid #5e4031; border-radius: 6px; padding: 7px; background: rgba(33, 20, 15, .45); }
 .route-mapping-summary span { display: block; color: #a98a70; font: 8px var(--app-font-mono); letter-spacing: .1em; text-transform: uppercase; }
